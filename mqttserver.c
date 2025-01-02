@@ -11,11 +11,18 @@
 
 #define SIZE 256
 
+#ifdef DEBUG
+# define DEBUG_PRINT(x) printf x
+#else
+# define DEBUG_PRINT(x) do {} while (0)
+#endif
+
 struct connection {
 	struct pollfd pfd;
 	struct connection *next;
 	struct connection *prev;
 	char *topic;
+	// int connection_accepted;
 	// int next_topic_index;
 };
 
@@ -26,26 +33,35 @@ struct connections {
 };
 
 void
-add_connection(struct connections conns, int fd) {
+add_connection(struct connections *conns, int fd) {
 	struct connection *new_connection = calloc(1, sizeof(struct connection));
+
+	if (!new_connection)
+		err(1, "calloc");
+
 	new_connection->next = NULL;
 	new_connection->prev = NULL;
 	// new_connection->next_topic_index = 0;
 	// memset(&new_connection->pfd, 0, sizeof(struct pollfd));
 
 	// set 'back' if it is NULL
-	if (!conns.conn_back) {
-		conns.conn_back = new_connection;
+	if (!conns->conn_back) {
+		conns->conn_back = new_connection;
 	}
 
 	// set prev/next
-	conns.conn_head->next = new_connection;
-	new_connection->prev = conns.conn_head;
+	if (conns->conn_head) {
+		conns->conn_head->next = new_connection;
+	}
+	else {
+		conns->conn_head = new_connection;
+	}
+	new_connection->prev = conns->conn_head;
 
 	// set new head
-	conns.conn_head = new_connection;
+	conns->conn_head = new_connection;
 
-	conns.count++;
+	conns->count++;
 
 	new_connection->pfd.fd = fd;
 	new_connection->pfd.events = POLLIN;
@@ -80,10 +96,26 @@ find_connection(char* portstr) {
 	if (getaddrinfo(NULL, portstr, &hint, &info_orig) != 0)
 		err(2, "getaddrinfo");
 
+	int bind_successful = 0;
 	for (info = info_orig; info != NULL; info = info->ai_next) {
 		sock_fd = socket(info->ai_family, info->ai_socktype, info->ai_protocol);
-		if (!bind(sock_fd, info->ai_addr, info->ai_addrlen)) break;
+
+		int opt = 1;
+		if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+			err(1, "setsockopt (for main listening socket)");
+
+		if (sock_fd == -1)
+			err(1, "socket");
+		if (!bind(sock_fd, info->ai_addr, info->ai_addrlen)) {
+			bind_successful = 1;
+			break;
+		}
 	}
+
+	if (!bind_successful) {
+		err(1, "Did not find any available address");
+	}
+
 
 	freeaddrinfo(info_orig);
 
@@ -91,26 +123,48 @@ find_connection(char* portstr) {
 }
 
 void
-conns_init(struct connections conns) {
-	memset(&conns, 0, sizeof(conns));
-	conns.count = 0;
-	conns.conn_back = NULL;
-	conns.conn_head = NULL;
+conns_init(struct connections *conns) {
+	memset(conns, 0, sizeof(struct connections));
+	conns->count = 0;
+	conns->conn_back = NULL;
+	conns->conn_head = NULL;
 }
 
 void
 process_write_from_client(struct connection *conn) {
-	if (write(conn->pfd.fd, "hello\n", 7))
+	if (write(conn->pfd.fd, "hello\n", 7) == -1)
 		err(1, "write");
 }
 
 void
-check_poll_in(struct connections conns) {
-	struct pollfd *pfds = calloc(conns.count, sizeof(struct pollfd*));
+print_conns(struct connections* conns) {
+	if (conns->count == 0) {
+		printf("No connections were found.\n");
+		return;
+	}
+	printf("Printing connections:\n");
+	int i = 0;
+	for (
+		struct connection* conn = conns->conn_head;
+		conn != NULL;
+		conn = conn->next
+	) {
+		printf("    [%d] fd: %d\n", i++, conn->pfd.fd);
+	}
+}
+
+void
+check_poll_in(struct connections *conns) {
+	if (conns->count == 0) return;
+	printf("checking POLLIN\n");
+
+	struct pollfd *pfds = calloc(conns->count, sizeof(struct pollfd));
+	if (!pfds)
+		err(1, "pfds calloc");
 	
 	int i = 0;
 	for (
-		struct connection* conn = conns.conn_head;
+		struct connection* conn = conns->conn_head;
 		conn != NULL;
 		conn = conn->next
 	) {
@@ -118,20 +172,38 @@ check_poll_in(struct connections conns) {
 		i++;
 	}
 
-	if (poll(pfds, 1, 1000) == -1)
+	if (poll(pfds, conns->count, 1000) == -1)
 		err(1, "poll");
 
 	for (
-		struct connection* conn = conns.conn_head;
+		struct connection* conn = conns->conn_head;
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (conn->pfd.revents | POLLIN) {
+		if (conn->pfd.revents & POLLIN) {
+			printf("Found POLLIN\n");
 			process_write_from_client(conn);
 		}
 	}
 
 	free(pfds);
+}
+
+void
+poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
+	int nfd = -1;
+	listening_pfd->events = POLLIN;
+
+	if (poll(listening_pfd, 1, 1000) == -1)
+		err(1, "poll listening pfd");
+
+	if (listening_pfd->revents & POLLIN) {
+		if ((nfd = accept(listening_pfd->fd, NULL, NULL)) == -1)
+			err(3, "accept");
+		printf("accepted\n");
+		add_connection(conns, nfd);
+		printf("connection added\n");
+	}
 }
 
 int
@@ -141,16 +213,19 @@ main(int argc, char* argv[]) {
 
 	int sock_fd = find_connection(portstr);
 	struct connections conns;
-	conns_init(conns);
+	conns_init(&conns);
 
 	if (listen(sock_fd, nclients) == -1)
 		err(3, "listen");
 
-	int nfd = 0;
+	struct pollfd listening_pfd;
+	listening_pfd.fd = sock_fd;
 	for (;;) {
-		if ((nfd = accept(sock_fd, NULL, NULL)) == -1)
-			err(3, "accept");
-		add_connection(conns, nfd);
+		poll_and_accept(&conns, &listening_pfd);
+		print_conns(&conns);
+
+		check_poll_in(&conns);
+		// check_poll_hup(conns);
 	}
 
 	return 0;
