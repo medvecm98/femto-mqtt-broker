@@ -8,8 +8,10 @@
 #include <poll.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include "log.h"
 
 #define SIZE 256
+#define POLL_WAIT_TIME 100
 
 #ifdef DEBUG
 # define DEBUG_PRINT(x) printf x
@@ -22,6 +24,7 @@ struct connection {
 	struct connection *next;
 	struct connection *prev;
 	char *topic;
+	int delete_me;
 	// int connection_accepted;
 	// int next_topic_index;
 };
@@ -51,12 +54,10 @@ add_connection(struct connections *conns, int fd) {
 
 	// set prev/next
 	if (conns->conn_head) {
+		// we already had a head
+		new_connection->prev = conns->conn_head;
 		conns->conn_head->next = new_connection;
 	}
-	else {
-		conns->conn_head = new_connection;
-	}
-	new_connection->prev = conns->conn_head;
 
 	// set new head
 	conns->conn_head = new_connection;
@@ -64,7 +65,8 @@ add_connection(struct connections *conns, int fd) {
 	conns->count++;
 
 	new_connection->pfd.fd = fd;
-	new_connection->pfd.events = POLLIN;
+	new_connection->pfd.events = POLLIN | POLLHUP;
+	new_connection->delete_me = 0;
 }
 
 void
@@ -132,7 +134,23 @@ conns_init(struct connections *conns) {
 
 void
 process_write_from_client(struct connection *conn) {
-	if (write(conn->pfd.fd, "hello\n", 7) == -1)
+	char buffer[256];
+	int fd = conn->pfd.fd;
+
+	if (write(fd, "begin echo\n", 12) == -1)
+		err(1, "write");
+
+	ssize_t bytes_read = read(fd, buffer, 256);
+	while (bytes_read == 256) {
+		write(fd, buffer, bytes_read);
+		bytes_read = read(fd, buffer, 256);
+	}
+	if (bytes_read == -1)
+		err(1, "read");
+	else
+		write(fd, buffer, bytes_read);
+
+	if (write(fd, "end echo\n", 10) == -1)
 		err(1, "write");
 }
 
@@ -145,7 +163,7 @@ print_conns(struct connections* conns) {
 	printf("Printing connections:\n");
 	int i = 0;
 	for (
-		struct connection* conn = conns->conn_head;
+		struct connection* conn = conns->conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
@@ -156,37 +174,39 @@ print_conns(struct connections* conns) {
 void
 check_poll_in(struct connections *conns) {
 	if (conns->count == 0) return;
-	printf("checking POLLIN\n");
 
-	struct pollfd *pfds = calloc(conns->count, sizeof(struct pollfd));
-	if (!pfds)
-		err(1, "pfds calloc");
+	// struct pollfd **pfds = calloc(conns->count, sizeof(struct pollfd*));
+	// if (!pfds)
+	// 	err(1, "pfds calloc");
 	
-	int i = 0;
+	// int i = 0;
+	// for (
+	// 	struct connection* conn = conns->conn_back;
+	// 	conn != NULL;
+	// 	conn = conn->next
+	// ) {
+	// 	pfds[i] = &conn->pfd;
+	// 	i++;
+	// }
+
+	// if (poll(pfds, conns->count, 1000) == -1)
+	// 	err(1, "poll");
+
 	for (
-		struct connection* conn = conns->conn_head;
+		struct connection* conn = conns->conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
-		pfds[i] = conn->pfd;
-		i++;
-	}
+		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
+			err(1, "poll");
 
-	if (poll(pfds, conns->count, 1000) == -1)
-		err(1, "poll");
-
-	for (
-		struct connection* conn = conns->conn_head;
-		conn != NULL;
-		conn = conn->next
-	) {
 		if (conn->pfd.revents & POLLIN) {
 			printf("Found POLLIN\n");
 			process_write_from_client(conn);
 		}
 	}
 
-	free(pfds);
+	// free(pfds);
 }
 
 void
@@ -194,15 +214,52 @@ poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
 	int nfd = -1;
 	listening_pfd->events = POLLIN;
 
-	if (poll(listening_pfd, 1, 1000) == -1)
+	if (poll(listening_pfd, 1, POLL_WAIT_TIME) == -1)
 		err(1, "poll listening pfd");
 
 	if (listening_pfd->revents & POLLIN) {
 		if ((nfd = accept(listening_pfd->fd, NULL, NULL)) == -1)
 			err(3, "accept");
-		printf("accepted\n");
+		log_debug("accepted\n");
 		add_connection(conns, nfd);
 		printf("connection added\n");
+	}
+}
+
+void
+check_poll_hup(struct connections *conns) {
+	for (
+		struct connection* conn = conns->conn_back;
+		conn != NULL;
+		conn = conn->next
+	) {
+		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
+			err(1, "poll");
+
+		if (conn->pfd.revents & POLLHUP) {
+			log_debug("Found POLLHUP\n");
+			conn->delete_me = 1;
+		}
+	}
+}
+
+void
+clear_connections(struct connections *conns) {
+	struct connection *prev, *next;
+	for (
+		struct connection* conn = conns->conn_back;
+		conn != NULL;
+		conn = conn->next
+	) {
+		if (conn->delete_me) {
+			prev = conn->prev;
+			next = conn->next;
+
+			prev->next = next;
+			next->prev = prev;
+
+			free(conn);
+		}
 	}
 }
 
@@ -224,8 +281,9 @@ main(int argc, char* argv[]) {
 		poll_and_accept(&conns, &listening_pfd);
 		print_conns(&conns);
 
+		check_poll_hup(&conns);
+		clear_connections(&conns);
 		check_poll_in(&conns);
-		// check_poll_hup(conns);
 	}
 
 	return 0;
