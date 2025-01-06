@@ -11,7 +11,7 @@
 #include "log.h"
 
 #define SIZE 256
-#define POLL_WAIT_TIME 100
+#define POLL_WAIT_TIME 150
 
 #ifdef DEBUG
 # define DEBUG_PRINT(x) printf x
@@ -137,9 +137,6 @@ process_write_from_client(struct connection *conn) {
 	char buffer[256];
 	int fd = conn->pfd.fd;
 
-	if (write(fd, "begin echo\n", 12) == -1)
-		err(1, "write");
-
 	ssize_t bytes_read = read(fd, buffer, 256);
 	while (bytes_read == 256) {
 		write(fd, buffer, bytes_read);
@@ -147,11 +144,13 @@ process_write_from_client(struct connection *conn) {
 	}
 	if (bytes_read == -1)
 		err(1, "read");
-	else
+	else if (bytes_read == 0) {
+		printf("end write fd: %d\n", fd);
+		conn->delete_me = 1;
+	}
+	else {
 		write(fd, buffer, bytes_read);
-
-	if (write(fd, "end echo\n", 10) == -1)
-		err(1, "write");
+	}
 }
 
 void
@@ -175,33 +174,16 @@ void
 check_poll_in(struct connections *conns) {
 	if (conns->count == 0) return;
 
-	// struct pollfd **pfds = calloc(conns->count, sizeof(struct pollfd*));
-	// if (!pfds)
-	// 	err(1, "pfds calloc");
-	
-	// int i = 0;
-	// for (
-	// 	struct connection* conn = conns->conn_back;
-	// 	conn != NULL;
-	// 	conn = conn->next
-	// ) {
-	// 	pfds[i] = &conn->pfd;
-	// 	i++;
-	// }
-
-	// if (poll(pfds, conns->count, 1000) == -1)
-	// 	err(1, "poll");
-
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
 		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
-			err(1, "poll");
+			err(1, "poll in check");
 
 		if (conn->pfd.revents & POLLIN) {
-			printf("Found POLLIN\n");
+			log_debug("Found POLLIN\n");
 			process_write_from_client(conn);
 		}
 	}
@@ -234,7 +216,7 @@ check_poll_hup(struct connections *conns) {
 		conn = conn->next
 	) {
 		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
-			err(1, "poll");
+			err(1, "poll hup check");
 
 		if (conn->pfd.revents & POLLHUP) {
 			log_debug("Found POLLHUP\n");
@@ -249,14 +231,27 @@ clear_connections(struct connections *conns) {
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
+		next = conn->next;
 		if (conn->delete_me) {
 			prev = conn->prev;
-			next = conn->next;
 
-			prev->next = next;
-			next->prev = prev;
+			if (prev)
+				prev->next = next;
+
+			if (next)
+				next->prev = prev;
+			
+			if (conn == conns->conn_back) {
+				conns->conn_back = next;
+			}
+
+			if (conn == conns->conn_head) {
+				conns->conn_head = prev;
+			}
+
+			conns->count--;
 
 			free(conn);
 		}
