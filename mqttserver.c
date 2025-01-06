@@ -20,6 +20,13 @@
 # define DEBUG_PRINT(x) do {} while (0)
 #endif
 
+/**
+ * NOTES:
+ * - Fixed header is 2 to 5 bytes.
+ * - Rest is up to 256 MiB.
+ * - 
+ */
+
 struct connection {
 	struct pollfd pfd;
 	struct connection *next;
@@ -66,7 +73,7 @@ add_connection(struct connections *conns, int fd) {
 	conns->count++;
 
 	new_connection->pfd.fd = fd;
-	new_connection->pfd.events = POLLIN | POLLHUP;
+	new_connection->pfd.events = POLLIN | POLLOUT;
 	new_connection->delete_me = 0;
 }
 
@@ -119,7 +126,6 @@ find_connection(char* portstr) {
 		err(1, "Did not find any available address");
 	}
 
-
 	freeaddrinfo(info_orig);
 
 	return sock_fd;
@@ -134,7 +140,7 @@ conns_init(struct connections *conns) {
 }
 
 void
-process_write_from_client(struct connection *conn) {
+process_incoming_data_from_client(struct connection *conn) {
 	char buffer[READ_SIZE];
 	int fd = conn->pfd.fd;
 
@@ -170,6 +176,11 @@ print_conns(struct connections* conns) {
 	}
 }
 
+/**
+ * Checks for POLLIN `poll` flag in active connections.
+ * 
+ * \param conns pointer to connections structure
+ */
 void
 check_poll_in(struct connections *conns) {
 	if (conns->count == 0) return;
@@ -184,11 +195,9 @@ check_poll_in(struct connections *conns) {
 
 		if (conn->pfd.revents & POLLIN) {
 			log_debug("Found POLLIN\n");
-			process_write_from_client(conn);
+			process_incoming_data_from_client(conn);
 		}
 	}
-
-	// free(pfds);
 }
 
 void
@@ -204,7 +213,6 @@ poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
 			err(3, "accept");
 		log_debug("accepted\n");
 		add_connection(conns, nfd);
-		printf("connection added\n");
 	}
 }
 
@@ -218,7 +226,7 @@ check_poll_hup(struct connections *conns) {
 		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
 			err(1, "poll hup check");
 
-		if (conn->pfd.revents & POLLHUP) {
+		if (conn->pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
 			log_debug("Found POLLHUP\n");
 			conn->delete_me = 1;
 		}
