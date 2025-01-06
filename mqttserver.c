@@ -11,6 +11,7 @@
 #include "log.h"
 
 #define SIZE 256
+#define READ_SIZE 256
 #define POLL_WAIT_TIME 150
 
 #ifdef DEBUG
@@ -134,18 +135,17 @@ conns_init(struct connections *conns) {
 
 void
 process_write_from_client(struct connection *conn) {
-	char buffer[256];
+	char buffer[READ_SIZE];
 	int fd = conn->pfd.fd;
 
-	ssize_t bytes_read = read(fd, buffer, 256);
-	while (bytes_read == 256) {
+	ssize_t bytes_read = read(fd, buffer, READ_SIZE);
+	while (bytes_read == READ_SIZE) {
 		write(fd, buffer, bytes_read);
-		bytes_read = read(fd, buffer, 256);
+		bytes_read = read(fd, buffer, READ_SIZE);
 	}
 	if (bytes_read == -1)
 		err(1, "read");
 	else if (bytes_read == 0) {
-		printf("end write fd: %d\n", fd);
 		conn->delete_me = 1;
 	}
 	else {
