@@ -12,36 +12,77 @@
 
 #define SIZE 256
 #define READ_SIZE 256
+#define RCVD_SIZE_DEFAULT 4096
+#define OUTGOING_SIZE_DEFAULT 4096
 #define POLL_WAIT_TIME 150
-
-#ifdef DEBUG
-# define DEBUG_PRINT(x) printf x
-#else
-# define DEBUG_PRINT(x) do {} while (0)
-#endif
 
 /**
  * NOTES:
  * - Fixed header is 2 to 5 bytes.
  * - Rest is up to 256 MiB.
- * - 
+ * - read buffer about 4 KiB
  */
+
+enum mqtt_control_packet_type {
+	MQTT_CONNECT = 1,
+	MQTT_CONNACK = 2,
+	MQTT_PUBLISH = 3,
+	MQTT_PUBACK = 4,
+	MQTT_SUBSCRIBE = 8,
+	MQTT_SUBACK = 9,
+	MQTT_UNSUBSCRIBE = 10,
+	MQTT_UNSUBACK = 11,
+	MQTT_PINGREQ = 12,
+	MQTT_PINGRESP = 13,
+	MQTT_DISCONNECT = 14
+};
+
+typedef enum mqtt_control_packet_type ctrl_packet_t;
 
 struct connection {
 	struct pollfd pfd;
+
 	struct connection *next;
 	struct connection *prev;
+
 	char *topic;
+
+	char *message;
+	int message_allocd_len;
+	ssize_t message_size;
+	ctrl_packet_t type;
+
 	int delete_me;
 	// int connection_accepted;
 	// int next_topic_index;
+
+	int state; // 0 - incoming, 1 - outgoing
 };
+
+typedef struct connection conn_t;
 
 struct connections {
 	struct connection *conn_head;
 	struct connection *conn_back;
 	int count;
 };
+
+
+struct mqtt_message {
+	ctrl_packet_t type;
+};
+
+void
+clear_pending_message(struct connection *conn, int should_free) {
+	if (should_free) {
+		free(conn->message);
+	}
+
+	conn->message_allocd_len = RCVD_SIZE_DEFAULT;
+	conn->message = calloc(conn->message_allocd_len, sizeof(char));
+	conn->message_size = 0;
+	conn->state = 0;
+}
 
 void
 add_connection(struct connections *conns, int fd) {
@@ -75,6 +116,7 @@ add_connection(struct connections *conns, int fd) {
 	new_connection->pfd.fd = fd;
 	new_connection->pfd.events = POLLIN | POLLOUT;
 	new_connection->delete_me = 0;
+	clear_pending_message(new_connection, 0);
 }
 
 void
@@ -139,23 +181,82 @@ conns_init(struct connections *conns) {
 	conns->conn_head = NULL;
 }
 
+ctrl_packet_t
+get_mqtt_type(char packet_type_flags) {
+	int type = packet_type_flags;
+	type >>= 4;
+	return type;
+}
+
+int
+from_val_len_to_uint(char *buffer) {
+	int multiplier = 1;
+	int value = 0;
+	char encoded_byte = 0;
+	int index = 0;
+
+	do {
+		encoded_byte = buffer[index++];
+		value += (encoded_byte & 127) * multiplier;
+		multiplier *= 128;
+		if (multiplier > 128 * 128 * 128) {
+			log_error("Malformed remaining length.");
+			return -1;
+		}
+	} while (encoded_byte & 128 != 0);
+
+	return value;
+}
+
 void
 process_incoming_data_from_client(struct connection *conn) {
-	char buffer[READ_SIZE];
+	char packet_type_flags = 0;
+	char *buffer = calloc(4, sizeof(char));
 	int fd = conn->pfd.fd;
 
-	ssize_t bytes_read = read(fd, buffer, READ_SIZE);
-	while (bytes_read == READ_SIZE) {
-		write(fd, buffer, bytes_read);
-		bytes_read = read(fd, buffer, READ_SIZE);
+	if (read(fd, &packet_type_flags, 1) == -1) {
+		log_error("Failed to read type and flags.");
+		conn->delete_me = 1;
 	}
+
+	conn->type = get_mqtt_type(packet_type_flags);
+
+	// read first byte of remaining length
+	if (read(fd, buffer, 1) == -1)
+		err(1, "read 1st 2nd bytes");
+
+	int rem_len_last_byte = 0;
+	if (buffer[rem_len_last_byte] & 128) {
+		if (rem_len_last_byte == 4) {
+			log_error("Remaining length is way too long.");
+			conn->delete_me = 1;
+		}
+
+		// there is more to remaining length
+		if (read(fd, buffer + rem_len_last_byte, 1) == -1)
+			err(1, "rem length read fail");
+
+		rem_len_last_byte++;
+	}
+	
+	int rem_len = from_val_len_to_uint(buffer);
+
+	free(buffer);
+	buffer = calloc(rem_len, sizeof(char));
+	ssize_t bytes_read = read(fd, buffer, rem_len);
+
 	if (bytes_read == -1)
 		err(1, "read");
+	else if (bytes_read != rem_len) {
+		log_error("Message read and remaining length values don't match.");
+		conn->delete_me = 1;
+	}
 	else if (bytes_read == 0) {
 		conn->delete_me = 1;
 	}
 	else {
-		write(fd, buffer, bytes_read);
+		conn->message_size = rem_len;
+		conn->message = buffer;
 	}
 }
 
@@ -174,6 +275,14 @@ print_conns(struct connections* conns) {
 	) {
 		printf("    [%d] fd: %d\n", i++, conn->pfd.fd);
 	}
+}
+
+void
+print_message(struct connection* conn) {
+	for (int i = 0; i < conn->message_size; i++) {
+		printf("%02x ", conn->message[i]);
+	}
+	printf("\n");
 }
 
 /**
@@ -196,6 +305,7 @@ check_poll_in(struct connections *conns) {
 		if (conn->pfd.revents & POLLIN) {
 			log_debug("Found POLLIN\n");
 			process_incoming_data_from_client(conn);
+			print_message(conn);
 		}
 	}
 }
@@ -234,6 +344,155 @@ check_poll_hup(struct connections *conns) {
 }
 
 void
+check_poll_out(struct connections *conns) {
+	for (
+		struct connection* conn = conns->conn_back;
+		conn != NULL;
+		conn = conn->next
+	) {
+		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
+			err(1, "poll out check");
+
+		if (conn->state == 1 && conn->message_size > 0 && conn->pfd.revents & POLLOUT) {
+			log_debug("Found POLLOUT\n");
+			write(conn->pfd.fd, conn->message, conn->message_size);
+			clear_pending_message(conn, 1);
+		}
+	}
+}
+
+void
+print_index(char *index) {
+	printf("index: %#04x\n", *index);
+}
+
+int
+check_protocol_name(char *index) {
+	if (*index != 0)
+		return 0;
+	index++;
+	
+	if (*index != 4)
+		return 0;
+	index++;
+	
+	if (*index != 'M')
+		return 0;
+	index++;
+	
+	if (*index != 'Q')
+		return 0;
+	index++;
+
+	if (*index != 'T')
+		return 0;
+	index++;
+
+	if (*index != 'T')
+		return 0;
+	index++;
+	
+	return 1;
+}
+
+int
+check_protocol_level(char *index) {
+	if (*index == 4) {
+		return 1;
+	}
+	else
+		return 0;
+}
+
+int
+get_keep_alive(char *index) {
+	int keep_alive = *index;
+	keep_alive <<= 1;
+	keep_alive = keep_alive | *(index + 1);
+	index += 2;
+
+	return keep_alive;
+}
+
+char*
+get_client_id(char *index) {
+	uint16_t client_id_length = *index;
+	index++;
+	client_id_length <<= 1;
+	client_id_length |= *index;
+	index++;
+	
+	char *client_id = calloc(client_id_length + 1, 1);
+	strncpy(client_id, index, client_id_length);
+
+	return client_id;
+}
+
+ssize_t
+handle_connect_message(char* incoming_message, char* outgoing_message) {
+	char *index = incoming_message;
+
+	if (!check_protocol_name(index)) {
+		log_error("Invalid protocol name in CONNECT variable header.");
+		return -1;
+	}
+	index += 6;
+
+	if (!check_protocol_level(index)) {
+		log_error("Invalid protocol level in CONNECT variable header.");
+		return -1;
+	}
+	index += 2;
+
+	// skip flags
+	index += 1;
+
+	int keep_alive = get_keep_alive(index);
+
+	char *client_id = get_client_id(index);
+	printf("client id: %s\n", client_id);
+
+	return 0;
+}
+
+void
+process_mqtt_message(struct connection *conn) {
+	if (conn->message_size > 0) {
+		char *incoming_message, *outgoing_message;
+		incoming_message = conn->message; // no fixed header here
+		outgoing_message = calloc(OUTGOING_SIZE_DEFAULT, sizeof(char));
+
+		ssize_t remaining_length = 0;
+		switch (conn->type) {
+			case MQTT_CONNECT:
+				handle_connect_message(incoming_message, outgoing_message);
+				break;
+			default:
+				log_error("Not implemented / unsupported.");
+				conn->delete_me = 1;
+				break;
+		}
+
+		free(conn->message);
+		conn->message = outgoing_message;
+		conn->state = 1;
+	}
+}
+
+void
+check_and_process_mqtt_messages(struct connections *conns) {
+	for (
+		struct connection* conn = conns->conn_back;
+		conn != NULL;
+		conn = conn->next
+	) {
+		if (conn->message_size > 0) {
+			process_mqtt_message(conn);
+		}
+	}
+}
+
+void
 clear_connections(struct connections *conns) {
 	struct connection *prev, *next;
 	for (
@@ -260,6 +519,7 @@ clear_connections(struct connections *conns) {
 			}
 
 			conns->count--;
+			free(conn->message);
 
 			free(conn);
 		}
@@ -287,6 +547,8 @@ main(int argc, char* argv[]) {
 		check_poll_hup(&conns);
 		clear_connections(&conns);
 		check_poll_in(&conns);
+		check_and_process_mqtt_messages(&conns);
+		check_poll_out(&conns);
 	}
 
 	return 0;
