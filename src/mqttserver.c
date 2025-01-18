@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <string.h>
@@ -46,11 +48,13 @@ struct connection {
 	struct connection *prev;
 
 	char *topic;
+	char *client_id;
 
 	char *message;
 	int message_allocd_len;
 	ssize_t message_size;
 	ctrl_packet_t type;
+	int keep_alive;
 
 	int delete_me;
 	// int connection_accepted;
@@ -67,6 +71,7 @@ struct connections {
 	int count;
 };
 
+typedef struct connections conns_t;
 
 struct mqtt_message {
 	ctrl_packet_t type;
@@ -116,6 +121,8 @@ add_connection(struct connections *conns, int fd) {
 	new_connection->pfd.fd = fd;
 	new_connection->pfd.events = POLLIN | POLLOUT;
 	new_connection->delete_me = 0;
+	new_connection->client_id = NULL;
+	new_connection->keep_alive = 0;
 	clear_pending_message(new_connection, 0);
 }
 
@@ -203,7 +210,7 @@ from_val_len_to_uint(char *buffer) {
 			log_error("Malformed remaining length.");
 			return -1;
 		}
-	} while (encoded_byte & 128 != 0);
+	} while ((encoded_byte & 128) != 0);
 
 	return value;
 }
@@ -263,26 +270,27 @@ process_incoming_data_from_client(struct connection *conn) {
 void
 print_conns(struct connections* conns) {
 	if (conns->count == 0) {
-		printf("No connections were found.\n");
+		// log_debug("No connections were found.");
 		return;
 	}
-	printf("Printing connections:\n");
+	log_debug("Printing connections:");
 	int i = 0;
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
-		printf("    [%d] fd: %d\n", i++, conn->pfd.fd);
+		log_debug("  [%d] fd: %d", i++, conn->pfd.fd);
 	}
 }
 
 void
 print_message(struct connection* conn) {
+	char* s = "M: ";
 	for (int i = 0; i < conn->message_size; i++) {
-		printf("%02x ", conn->message[i]);
+		asprintf(&s, "%s%02x ", s, conn->message[i]);
 	}
-	printf("\n");
+	log_debug(s);
 }
 
 /**
@@ -303,9 +311,9 @@ check_poll_in(struct connections *conns) {
 			err(1, "poll in check");
 
 		if (conn->pfd.revents & POLLIN) {
-			log_debug("Found POLLIN\n");
+			log_debug("Found POLLIN");
 			process_incoming_data_from_client(conn);
-			print_message(conn);
+			// print_message(conn);
 		}
 	}
 }
@@ -321,7 +329,7 @@ poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
 	if (listening_pfd->revents & POLLIN) {
 		if ((nfd = accept(listening_pfd->fd, NULL, NULL)) == -1)
 			err(3, "accept");
-		log_debug("accepted\n");
+		// log_debug("accepted");
 		add_connection(conns, nfd);
 	}
 }
@@ -354,7 +362,7 @@ check_poll_out(struct connections *conns) {
 			err(1, "poll out check");
 
 		if (conn->state == 1 && conn->message_size > 0 && conn->pfd.revents & POLLOUT) {
-			log_debug("Found POLLOUT\n");
+			log_debug("Found POLLOUT");
 			write(conn->pfd.fd, conn->message, conn->message_size);
 			clear_pending_message(conn, 1);
 		}
@@ -363,7 +371,7 @@ check_poll_out(struct connections *conns) {
 
 void
 print_index(char *index) {
-	printf("index: %#04x\n", *index);
+	log_trace("index: %#04x\n", *index);
 }
 
 int
@@ -428,44 +436,118 @@ get_client_id(char *index) {
 	return client_id;
 }
 
-ssize_t
-handle_connect_message(char* incoming_message, char* outgoing_message) {
+char *
+create_connack_message(uint8_t return_code) {
+	char *buffer = calloc(4, sizeof(char));
+
+	buffer[0] = 0x02 << 4; // control packet type
+	buffer[1] = 0x02; // remaining length
+	buffer[2] = 0x00; // ack flags - session present = 0
+	buffer[3] = return_code;
+
+	return buffer;
+}
+
+int
+read_connect_message(conn_t *conn, char* incoming_message) {
 	char *index = incoming_message;
 
 	if (!check_protocol_name(index)) {
 		log_error("Invalid protocol name in CONNECT variable header.");
-		return -1;
+		return 1;
 	}
 	index += 6;
 
 	if (!check_protocol_level(index)) {
 		log_error("Invalid protocol level in CONNECT variable header.");
-		return -1;
+		return 2;
 	}
 	index += 2;
 
 	// skip flags
 	index += 1;
 
-	int keep_alive = get_keep_alive(index);
+	conn->keep_alive = get_keep_alive(index);
 
 	char *client_id = get_client_id(index);
-	printf("client id: %s\n", client_id);
+	log_debug("client id: %s", client_id);
+
+	conn->client_id = client_id;
 
 	return 0;
 }
 
+int
+check_for_client_id_repeated(struct connections *conns, char* client_id) {
+	//TODO: fix (check before setting client_id)
+	return 0;
+
+	for (
+		struct connection* conn = conns->conn_back;
+		conn != NULL;
+		conn = conn->next
+	) {
+		if (conn->client_id && strcmp(client_id, conn->client_id) == 0) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+char *
+create_connect_response(conn_t *conn, conns_t *conns, int code) {
+	if (code == 0) {
+		if (check_for_client_id_repeated(conns, conn->client_id)) {
+			log_warn("Found duplicate ID.");
+			conn->delete_me = 1;
+		}
+		else {
+			// CONNACK OK
+			log_info("CONNACK OK");
+			conn->message_size = 4;
+			return create_connack_message(0x00);
+		}
+	}
+	else if (code == 2) {
+		// CONNACK invalid protocol version (only v3.1.1 is supported)
+		log_info("CONNACK invalid protocol version");
+		conn->message_size = 4;
+		return create_connack_message(0x01);
+	}
+	else {
+		// error, just disconnect
+		log_warn("error, disconnect");
+		conn->delete_me = 1;
+	}
+
+	return NULL;
+}
+
+int
+read_subscribe_message() {
+	
+}
+
 void
-process_mqtt_message(struct connection *conn) {
+process_mqtt_message(struct connection *conn, struct connections *conns) {
 	if (conn->message_size > 0) {
 		char *incoming_message, *outgoing_message;
 		incoming_message = conn->message; // no fixed header here
-		outgoing_message = calloc(OUTGOING_SIZE_DEFAULT, sizeof(char));
+		outgoing_message = NULL;
+		int code = 255;
 
-		ssize_t remaining_length = 0;
 		switch (conn->type) {
 			case MQTT_CONNECT:
-				handle_connect_message(incoming_message, outgoing_message);
+				code = read_connect_message(conn, incoming_message);
+				outgoing_message = create_connect_response(conn, conns, code);
+				break;
+			case MQTT_DISCONNECT:
+				log_info("Client %s disconnecting.", conn->client_id);
+				conn->delete_me = 1;
+				break;
+			case MQTT_SUBSCRIBE:
+
 				break;
 			default:
 				log_error("Not implemented / unsupported.");
@@ -487,7 +569,7 @@ check_and_process_mqtt_messages(struct connections *conns) {
 		conn = conn->next
 	) {
 		if (conn->message_size > 0) {
-			process_mqtt_message(conn);
+			process_mqtt_message(conn, conns);
 		}
 	}
 }
