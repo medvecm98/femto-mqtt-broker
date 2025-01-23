@@ -41,7 +41,7 @@ read_payload(conn_t *conn, char *incoming_message) {
         index += 2;
         rem_len -= 2;
 
-        topic = calloc(length, 1);
+        topic = calloc(length + 1, sizeof(char));
         if (!topic)
             err(1, "read payload subscribe calloc topic");
         for (int i = 0; i < length; i++) {
@@ -56,6 +56,8 @@ read_payload(conn_t *conn, char *incoming_message) {
 
         if (conn->type == MQTT_SUBSCRIBE) {
             insert_topic(conn->topics, topic, 0x00);
+            log_trace("Subscribed to topic: %s", topic);
+            log_trace("Subscribed to topic (len): %d", length);
             free(topic);
         }
         else {

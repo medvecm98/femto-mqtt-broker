@@ -14,7 +14,7 @@ tokenize_topic(char *topic, int *count_out) {
         err(1, "tokenize topic calloc tokenized_topic");
     temp = strtok(topic, "/");
     for (int i = 0; i < count; i++) {
-        tokenized_topic[i] = calloc(strlen(temp), sizeof(char));
+        tokenized_topic[i] = calloc(strlen(temp) + 1, sizeof(char));
         strncpy(tokenized_topic[i], temp, strlen(temp));
         temp = strtok(NULL, "/");
     }
@@ -38,7 +38,7 @@ insert_topic(topics_t *list, char *topic_str, int qos_code) {
         head->next = topic;
     }
     topic->next = NULL;
-    char* topic_copy = calloc(strlen(topic_str), sizeof(char));
+    char* topic_copy = calloc(strlen(topic_str) + 1, sizeof(char));
     if (!topic_copy)
         err(1, "insert topic calloc topic_copy");
     strcpy(topic_copy, topic_str);

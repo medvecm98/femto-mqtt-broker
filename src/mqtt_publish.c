@@ -130,7 +130,7 @@ send_published_message(conns_t *conns, publish_t *publish) {
             topic != NULL;
             topic = topic->next
         ) {
-            char *publish_topic_copy = calloc(publish->topic_size, sizeof(char));
+            char *publish_topic_copy = calloc(publish->topic_size + 1, sizeof(char));
             strcpy(publish_topic_copy, publish->topic);
             if (topic_match(topic, publish_topic_copy)) {
                 create_publish_message(conn, publish);

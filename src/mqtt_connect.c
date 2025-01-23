@@ -3,25 +3,29 @@
 int
 get_keep_alive(char *index) {
 	int keep_alive = *index;
-	keep_alive <<= 1;
+	keep_alive <<= 8;
 	keep_alive = keep_alive | *(index + 1);
-	index += 2;
+
+	log_trace("Keep alive: %d", keep_alive);
 
 	return keep_alive;
 }
 
 char*
 get_client_id(char *index) {
-	uint16_t client_id_length = *index;
-	index++;
-	client_id_length <<= 1;
-	client_id_length |= *index;
-	index++;
+	uint8_t *index8 = (uint8_t*) index;
+	uint16_t client_id_length = *index8;
+	index8++;
+	client_id_length <<= 8;
+	client_id_length |= *index8;
+	index8++;
+
+	log_trace("client_id_length: %d", client_id_length);
 	
 	char *client_id = calloc(client_id_length + 1, 1);
 	if (!client_id)
         err(1, "get client_id calloc client_id");
-	strncpy(client_id, index, client_id_length);
+	memcpy(client_id, index8, client_id_length);
 
 	return client_id;
 }
@@ -94,12 +98,13 @@ read_connect_message(conns_t *conns, conn_t *conn, char* incoming_message) {
 		log_error("Invalid protocol level in CONNECT variable header.");
 		return 2;
 	}
-	index += 2;
+	index += 1;
 
 	// skip flags
 	index += 1;
 
 	conn->keep_alive = get_keep_alive(index);
+	index += 2;
 
     /* payload */
 
