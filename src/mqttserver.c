@@ -164,6 +164,7 @@ process_incoming_data_from_client(struct connection *conn) {
 	}
 
 	conn->type = get_mqtt_type((uint8_t) packet_type_flags);
+	log_debug("Type received: %d", conn->type);
 
 	if (conn->type == MQTT_PINGREQ || conn->type == MQTT_DISCONNECT) {
 		// for messages with empty remaining length
