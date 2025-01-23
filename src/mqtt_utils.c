@@ -39,6 +39,8 @@ char *
 from_uint_to_val_len(int val) {
 	char encoded_byte;
 	char *output = calloc(5, sizeof(char));
+	if (!output)
+        err(1, "uint to val len calloc output");
 	int index = 0;
 
 	do {

@@ -19,6 +19,8 @@ get_client_id(char *index) {
 	index++;
 	
 	char *client_id = calloc(client_id_length + 1, 1);
+	if (!client_id)
+        err(1, "get client_id calloc client_id");
 	strncpy(client_id, index, client_id_length);
 
 	return client_id;
@@ -27,6 +29,8 @@ get_client_id(char *index) {
 char *
 create_connack_message(uint8_t return_code) {
 	char *buffer = calloc(4, sizeof(char));
+	if (!buffer)
+        err(1, "create connack calloc buffer");
 
 	buffer[0] = 0x02 << 4; // control packet type
 	buffer[1] = 0x02; // remaining length

@@ -42,6 +42,8 @@ read_payload(conn_t *conn, char *incoming_message) {
         rem_len -= 2;
 
         topic = calloc(length, 1);
+        if (!topic)
+            err(1, "read payload subscribe calloc topic");
         for (int i = 0; i < length; i++) {
             topic[i] = *index;
             index++;
@@ -81,6 +83,8 @@ read_un_subscribe_message(conn_t *conn, char *incoming_message) {
 char *
 create_suback_message(conn_t *conn, int topic_counter) {
     char *buffer = calloc(4 + topic_counter, sizeof(char));
+    if (!buffer)
+        err(1, "create suback calloc buffer");
     char *buffer_orig = buffer;
     int len = 0;
 
@@ -129,6 +133,8 @@ create_suback_message(conn_t *conn, int topic_counter) {
 char *
 create_unsuback_message(conn_t *conn) {
     char* buffer = calloc(4, sizeof(char));
+    if (!buffer)
+        err(1, "create unsuback calloc buffer");
 
     buffer[0] = (char) 0xB0;
     buffer[1] = 0x02;

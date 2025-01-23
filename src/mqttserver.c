@@ -29,6 +29,8 @@ clear_pending_message(struct connection *conn, int should_free) {
 
 	conn->message_allocd_len = RCVD_SIZE_DEFAULT;
 	conn->message = calloc(conn->message_allocd_len, sizeof(char));
+	if (!conn->message)
+        err(1, "clr pending msg calloc conn->message");
 	conn->message_size = 0;
 	conn->state = 0;
 	conn->last_topic_before_insert = NULL;
@@ -40,7 +42,7 @@ add_connection(struct connections *conns, int fd) {
 	struct connection *new_connection = calloc(1, sizeof(struct connection));
 
 	if (!new_connection)
-		err(1, "calloc");
+		err(1, "calloc add connection");
 
 	new_connection->next = NULL;
 	new_connection->prev = NULL;
@@ -152,6 +154,8 @@ void
 process_incoming_data_from_client(struct connection *conn) {
 	char packet_type_flags = 0;
 	char *buffer = calloc(4, sizeof(char));
+	if (!buffer)
+        err(1, "process incoming data calloc buffer");
 	int fd = conn->pfd.fd;
 
 	if (read(fd, &packet_type_flags, 1) == -1) {
@@ -203,6 +207,8 @@ process_incoming_data_from_client(struct connection *conn) {
 
 	free(buffer);
 	buffer = calloc(rem_len, sizeof(char));
+	if (!buffer)
+        err(1, "process incoming data calloc buffer reallocate");
 	ssize_t bytes_read = read(fd, buffer, rem_len);
 
 	if (bytes_read == -1)
@@ -399,6 +405,8 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 		case MQTT_PINGREQ:
 			log_debug("Received ping");
 			outgoing_message = calloc(2, 1);
+			if (!outgoing_message)
+        		err(1, "process mqtt msg calloc outgoing_message");
 			*outgoing_message = (char) 0xD0;
 			*(outgoing_message + 1) = 0x00;
 			conn->message_size = 2;
@@ -509,6 +517,8 @@ main(int argc, char* argv[]) {
 		switch (opt) {
 			case 'p':
 				portstr = calloc(strlen(optarg), sizeof(char));
+				if (!portstr)
+        			err(1, "main calloc portstr");
 				portstr = strcpy(portstr, optarg);
 				break;
 			default:
