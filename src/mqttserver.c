@@ -10,7 +10,7 @@
 #define READ_SIZE 256
 #define RCVD_SIZE_DEFAULT 4096
 #define OUTGOING_SIZE_DEFAULT 4096
-#define POLL_WAIT_TIME 150
+#define POLL_WAIT_TIME 20
 
 static conns_t *global_conns = NULL;
 
