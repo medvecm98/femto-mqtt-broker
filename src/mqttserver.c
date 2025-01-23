@@ -453,6 +453,9 @@ clear_connections(struct connections *conns) {
 			if (shutdown(conn->pfd.fd, SHUT_RDWR) == -1) {
 				err(12, "shutdown fail");
 			}
+			if (close(conn->pfd.fd) == -1) {
+				err(1, "closing fd when deleting connection");
+			}
 
 			prev = conn->prev;
 
@@ -480,7 +483,7 @@ clear_connections(struct connections *conns) {
 
 void
 sigaction_handler(int sig) {
-	log_warn("SIGINT!");
+	log_warn("Interrupt received, server terminating.");
 	for (
 		conn_t *conn = global_conns->conn_back;
 		conn != NULL;
@@ -533,6 +536,7 @@ main(int argc, char* argv[]) {
 	struct sigaction sa = { 0 };
 	sa.sa_handler = &sigaction_handler;
 	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
 
 	int sock_fd = find_connection(portstr);
 	struct connections conns;
