@@ -502,7 +502,22 @@ check_keep_alive(conns_t *conns) {
 
 int
 main(int argc, char* argv[]) {
+	int opt;
 	char* portstr = "1883";
+
+	while ((opt = getopt(argc, argv, "-p:")) != -1) {
+		switch (opt) {
+			case 'p':
+				portstr = calloc(strlen(optarg), sizeof(char));
+				portstr = strcpy(portstr, optarg);
+				break;
+			default:
+				printf("Usage: ./mqttserver [-p <PORT>]\n");
+				exit(1);
+		}
+		
+	}
+
 	int nclients = SIZE;
 
 	struct sigaction sa = { 0 };
