@@ -4,16 +4,22 @@ publish_t *
 read_publish_message(conn_t *conn, char *incoming_message) {
     char *index = incoming_message;
     publish_t *publish = calloc(1, sizeof(publish_t));
+    if (!publish)
+        err(1, "read publish msg calloc publish_t");
 
     uint16_t topic_name_len = 0;
     topic_name_len = (uint8_t)index[0] << 8;
     topic_name_len |= index[1];
 
     publish->topic = calloc(topic_name_len + 1, sizeof(char));
+    if (!publish->topic)
+        err(1, "read publish msg calloc publish->topic");
     strncpy(publish->topic, index + 2, topic_name_len);
 
     uint32_t msg_len = conn->message_size - 2 - topic_name_len;
     publish->message = calloc(msg_len + 1, sizeof(char));
+    if (!publish->message)
+        err(1, "read publish msg calloc publish->message");
     strncpy(publish->message, index + 2 + topic_name_len, msg_len);
 
     publish->message_size = msg_len;
@@ -74,6 +80,8 @@ create_publish_message(conn_t *conn, publish_t *publish) {
     int len = 0;
 
     char* message = calloc(1 + rem_len_len + 2 + publish->topic_size + publish->message_size, sizeof(char));
+    if (!message)
+        err(1, "calloc publish msg");
     char* message_orig = message;
 
     // control packet type
