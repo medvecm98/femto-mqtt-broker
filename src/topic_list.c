@@ -43,7 +43,10 @@ insert_topic(topics_t *list, char *topic_str, int qos_code) {
         err(1, "insert topic calloc topic_copy");
     strcpy(topic_copy, topic_str);
     topic->topic = topic_copy;
-    topic->tokenized_topic = tokenize_topic(topic_str, &topic->topic_token_count);
+    topic->tokenized_topic = tokenize_topic(
+        topic_str,
+        &topic->topic_token_count
+    );
     topic->qos_code = qos_code;
 
     if (list->back == NULL) {
