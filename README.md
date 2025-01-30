@@ -11,3 +11,7 @@ make
 ```
 
 ... in root directory. Dependencies are **libc** and C compiler (gcc or clang).
+
+## Logging library
+
+Logging library is courtesy of [rxi/log.c](https://github.com/rxi/log.c)
