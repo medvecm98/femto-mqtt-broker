@@ -37,7 +37,7 @@ int
 find_topic(topics_t *list, char *topic_str);
 
 topics_t *
-create_topics_list();
+create_topics_list(void);
 
 void
 delete_topics_list(topics_t *list);

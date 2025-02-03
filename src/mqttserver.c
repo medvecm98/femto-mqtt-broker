@@ -248,7 +248,7 @@ void
 print_message(struct connection* conn) {
 	char* s = "M: ";
 	for (int i = 0; i < conn->message_size; i++) {
-		asprintf(&s, "%s%02x ", s, conn->message[i]);
+	//	asprintf(&s, "%s%02x ", s, conn->message[i]);
 	}
 	log_debug(s);
 }
@@ -296,7 +296,7 @@ void
 print_hex(char *buffer) {
 	char* s = "Hex: ";
 	for (int i = 0; i < strlen(buffer); i++) {
-		asprintf(&s, "%s%02x ", s, buffer[i]);
+	//	asprintf(&s, "%s%02x ", s, buffer[i]);
 	}
 	log_debug(s);
 }
