@@ -90,9 +90,10 @@ create_publish_message(conn_t *conn, publish_t *publish) {
     len++;
 
     // remaining length
-    strncpy(message, rem_len, rem_len_len);
+    memcpy(message, rem_len, rem_len_len);
     message += rem_len_len;
     len += rem_len_len;
+    free(rem_len);
 
     // topic (16 bit size)
     *message = (publish->topic_size >> 8) & 0x00FF;
@@ -102,9 +103,7 @@ create_publish_message(conn_t *conn, publish_t *publish) {
     len += 2;
 
     // topic (string)
-    strncpy(message, publish->topic, publish->topic_size);
-    log_trace("Topic: %s", publish->topic);
-    log_trace("Topic size: %d", publish->topic_size);
+    memcpy(message, publish->topic, publish->topic_size);
     message += publish->topic_size;
     len += publish->topic_size;
 
@@ -116,10 +115,13 @@ create_publish_message(conn_t *conn, publish_t *publish) {
     conn->state = 1;
     conn->message = message_orig;
     conn->message_size = len;
+    conn->type = MQTT_PUBLISH;
 }
 
-void
-send_published_message(conns_t *conns, publish_t *publish) {
+int
+send_published_message(conn_t *sender_conn, conns_t *conns, publish_t *publish) {
+    int resend_to_sender = 0;
+
     for (
         conn_t *conn = conns->conn_back;
         conn != NULL;
@@ -131,11 +133,19 @@ send_published_message(conns_t *conns, publish_t *publish) {
             topic = topic->next
         ) {
             char *publish_topic_copy = calloc(publish->topic_size + 1, sizeof(char));
-            strcpy(publish_topic_copy, publish->topic);
+            strncpy(publish_topic_copy, publish->topic, publish->topic_size);
             if (topic_match(topic, publish_topic_copy)) {
+                log_trace("matching %s", conn->client_id);
+                if (sender_conn == conn) {
+                    resend_to_sender = 1;
+                    free(conn->message);
+                }
                 create_publish_message(conn, publish);
             }
             free(publish_topic_copy);
         }
+        
     }
+
+    return resend_to_sender;
 }

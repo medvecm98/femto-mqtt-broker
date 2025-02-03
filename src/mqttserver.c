@@ -10,7 +10,7 @@
 #define READ_SIZE 256
 #define RCVD_SIZE_DEFAULT 4096
 #define OUTGOING_SIZE_DEFAULT 4096
-#define POLL_WAIT_TIME 10
+#define POLL_WAIT_TIME 20
 
 static conns_t *global_conns = NULL;
 
@@ -21,16 +21,13 @@ static conns_t *global_conns = NULL;
  * - read buffer about 4 KiB
  */
 
+
 void
-clear_pending_message(struct connection *conn, int should_free) {
+clear_message(struct connection *conn, int should_free) {
 	if (should_free) {
 		free(conn->message);
 	}
 
-	conn->message_allocd_len = RCVD_SIZE_DEFAULT;
-	conn->message = calloc(conn->message_allocd_len, sizeof(char));
-	if (!conn->message)
-        err(1, "clr pending msg calloc conn->message");
 	conn->message_size = 0;
 	conn->state = 0;
 	conn->last_topic_before_insert = NULL;
@@ -78,7 +75,7 @@ add_connection(struct connections *conns, int fd) {
 	new_connection->last_seen = time(NULL);
 	new_connection->seen_connect_packet = 0;
 
-	clear_pending_message(new_connection, 0);
+	clear_message(new_connection, 0);
 }
 
 int
@@ -154,13 +151,10 @@ check_zeroed_flags(uint8_t packet_type_flags) {
 void
 process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 	char packet_type_flags = fixed_header[0];
-	// char *buffer = calloc(4, sizeof(char));
-	// if (!buffer)
-    //     err(1, "process incoming data calloc buffer");
 	int fd = conn->pfd.fd;
 
 	conn->type = get_mqtt_type((uint8_t) packet_type_flags);
-	log_debug("Type received: %d", conn->type);
+	// log_debug("Type received: %d", conn->type);
 
 	if (conn->type == MQTT_PINGREQ || conn->type == MQTT_DISCONNECT) {
 		// for messages with empty remaining length
@@ -181,40 +175,19 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 		}
 	}
 
-	// // read first byte of remaining length
-	// if (read(fd, buffer, 1) == -1)
-	// 	err(1, "read 1st 2nd bytes");
-
-	// int rem_len_last_byte = 0;
-	// if (buffer[rem_len_last_byte] & 128) {
-	// 	if (rem_len_last_byte == 4) {
-	// 		log_error("Remaining length is way too long.");
-	// 		conn->delete_me = 1;
-	// 	}
-
-	// 	// there is more to remaining length
-	// 	if (read(fd, buffer + rem_len_last_byte, 1) == -1)
-	// 		err(1, "rem length read fail");
-
-	// 	rem_len_last_byte++;
-	// }
-	
 	int rem_len = from_val_len_to_uint(fixed_header + 1);
 
 	char *buffer = calloc(rem_len, sizeof(char));
 	if (!buffer)
-        err(1, "process incoming data calloc buffer reallocate");
+		err(1, "process incoming data calloc buffer reallocate");
 
 	ssize_t bytes_read = read(fd, buffer, rem_len);
 	ssize_t bytes_read_acc = bytes_read;
 	while (bytes_read_acc < rem_len && bytes_read > 0) {
-		// poll(&conn->pfd, 1, POLL_WAIT_TIME);
-		// if (conn->pfd.revents & POLLIN) {
-			bytes_read = read(fd, buffer + bytes_read_acc, rem_len - bytes_read_acc);
-			if (bytes_read == -1)
-				err(1, "process incoming data read");
-			bytes_read_acc += bytes_read;
-		// }
+		bytes_read = read(fd, buffer + bytes_read_acc, rem_len - bytes_read_acc);
+		if (bytes_read == -1)
+			err(1, "process incoming data read");
+		bytes_read_acc += bytes_read;
 	}
 
 	if (bytes_read == -1)
@@ -222,10 +195,12 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 	else if (bytes_read_acc != rem_len) {
 		log_error("Message read and remaining length values don't match.");
 		conn->delete_me = 1;
+		// free(buffer);
 	}
 	else if (bytes_read == 0) {
 		log_error("No bytes were read.");
 		conn->delete_me = 1;
+		// free(buffer);
 	}
 	else {
 		conn->message_size = rem_len;
@@ -235,36 +210,38 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 
 void
 print_conns(struct connections* conns) {
-	// if (conns->count == 0) {
-	// 	// log_debug("No connections were found.");
-	// 	return;
-	// }
-	// log_debug("Printing connections:");
-	// int i = 0, j;
-	// for (
-	// 	struct connection *conn = conns->conn_back;
-	// 	conn != NULL;
-	// 	conn = conn->next
-	// ) {
-	// 	log_debug("..[%d] fd: %d", i, conn->pfd.fd);
-	// 	log_debug("..[%d] client_id: %s", i, conn->client_id);
-	// 	log_debug("..[%d] keep_alive: %d", i, conn->keep_alive);
-	// 	log_debug("..[%d] topics:", i);
-	// 	j = 0;
-	// 	for (
-	// 		topic_t *topic = conn->topics->back;
-	// 		topic != NULL;
-	// 		topic = topic->next
-	// 	) {
-	// 		log_debug("....[%d] topic: %s", j, topic->topic);
-	// 		for (int k = 0; k < topic->topic_token_count; k++) {
-	// 			log_debug("...... token %d: %s", k, topic->tokenized_topic[k]);
-	// 		}
-	// 		log_debug("....[%d] QoS code: %#04x", j, topic->qos_code);
-	// 		j++;
-	// 	}
-	// 	i++;
-	// }
+	if (conns->count == 0) {
+		// log_debug("No connections were found.");
+		return;
+	}
+	log_debug("Printing connections:");
+	int i = 0, j;
+	for (
+		struct connection *conn = conns->conn_back;
+		conn != NULL;
+		conn = conn->next
+	) {
+		log_debug(".%d. fd: %p", i, conn);
+		log_debug(".%d. fd: %d", i, conn->pfd.fd);
+		log_debug(".%d. client_id: %s", i, conn->client_id);
+		log_debug(".%d. keep_alive: %d", i, conn->keep_alive);
+		log_debug(".%d. message size: %d", i, conn->message_size);
+		log_debug(".%d. topics:", i);
+		j = 0;
+		for (
+			topic_t *topic = conn->topics->back;
+			topic != NULL;
+			topic = topic->next
+		) {
+			log_debug(".%d.%d. topic: %s", i, j, topic->topic);
+			for (int k = 0; k < topic->topic_token_count; k++) {
+				log_debug(".%d.%d.%d. token: %s", i, j, k, topic->tokenized_topic[k]);
+			}
+			log_debug(".%d.%d. QoS code: %#04x", i, j, topic->qos_code);
+			j++;
+		}
+		i++;
+	}
 }
 
 void
@@ -286,7 +263,7 @@ read_fixed_header(conn_t *conn) {
 
 	read_bytes = read(conn->pfd.fd, buffer, 2);
 	read_bytes_acc += read_bytes;
-	log_debug("read bytes: %d, acc: %d", read_bytes, read_bytes_acc);
+	// log_debug("read bytes: %d, acc: %d", read_bytes, read_bytes_acc);
 
 	if (read_bytes == 0) {
 		// conn->delete_me = 1;
@@ -302,14 +279,6 @@ read_fixed_header(conn_t *conn) {
 
 	// read other remaining length bytes, if needed
 	while ((buffer[read_bytes_acc - 1] & 128) != 0 && read_bytes_acc < 5) {
-		// if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
-		// 	err(1, "poll fail fixed header sec");
-		// if (conn->pfd.revents & POLLIN) {
-		// 	read_bytes = read(conn->pfd.fd, buffer + read_bytes_acc, 1);
-		// 	if (read_bytes == -1)
-		// 		err(1, "read bytes fixed header sec");
-		// 	read_bytes_acc += read_bytes;
-		// }
 		read_bytes = read(conn->pfd.fd, buffer + read_bytes_acc, 1);
 		read_bytes_acc += read_bytes;
 	}
@@ -357,9 +326,9 @@ check_poll_in(struct connections *conns) {
 			if (!fixed_header && !conn->delete_me) {
 				continue;
 			}
-			print_hex(fixed_header);
+			// print_hex(fixed_header);
 			process_incoming_data_from_client(conn, fixed_header);
-			print_message(conn);
+			// print_message(conn);
 			free(fixed_header);
 		}
 	}
@@ -411,9 +380,11 @@ check_poll_out(struct connections *conns) {
 			err(1, "poll out check");
 
 		if (conn->state == 1 && conn->message_size > 0 && conn->pfd.revents & POLLOUT) {
-			log_debug("Found POLLOUT");
+			// log_debug("Found POLLOUT");
+			if (conn->type == MQTT_PUBLISH)
+				log_trace("publish...");
 			write(conn->pfd.fd, conn->message, conn->message_size);
-			clear_pending_message(conn, 1);
+			clear_message(conn, 1);
 		}
 	}
 }
@@ -434,10 +405,11 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 
 	if (conn->type != MQTT_CONNECT && conn->seen_connect_packet == 0) {
 		conn->delete_me = 1;
-		print_conns(conns);
+		// print_conns(conns);
 		return;
 	}
 
+	int publish_send_to_sender = 0;
 	switch (conn->type) {
 		case MQTT_CONNECT:
 			log_debug("Received CONNECT");
@@ -455,48 +427,58 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			conn->delete_me = 1;
 			break;
 		case MQTT_SUBSCRIBE:
-			log_debug("Received SUBSCRIBE");
+			log_debug("Received SUBSCRIBE from %s", conn->client_id);
 			conn->last_topic_before_insert = conn->topics->head;
 			topics_inserted_code = read_un_subscribe_message(conn, incoming_message);
 			outgoing_message = create_un_subscribe_response(conn, conns, topics_inserted_code);
+			print_conns(conns);
 			break;
 		case MQTT_UNSUBSCRIBE:
-			log_debug("Received UNSUBSCRIBE");
+			log_debug("Received UNSUBSCRIBE from %s", conn->client_id);
 			conn->last_topic_before_insert = conn->topics->head;
 			topics_inserted_code = read_un_subscribe_message(conn, incoming_message);
 			outgoing_message = create_un_subscribe_response(conn, conns, topics_inserted_code);
+			print_conns(conns);
 			break;
 		case MQTT_PUBLISH:
-			log_debug("Received PUBLISH");
+			;
+			log_debug("Received PUBLISH from %s", conn->client_id);
+
 			publish_t *publish = read_publish_message(conn, incoming_message);
-			send_published_message(conns, publish);
+			publish_send_to_sender = send_published_message(conn, conns, publish);
+
 			free(publish->topic);
 			free(publish->message);
 			free(publish);
 			break;
 		case MQTT_PINGREQ:
-			log_debug("Received ping");
+			log_debug("Received ping from %s", conn->client_id);
 			outgoing_message = calloc(2, 1);
 			if (!outgoing_message)
-        		err(1, "process mqtt msg calloc outgoing_message");
+				err(1, "process mqtt msg calloc outgoing_message");
 			*outgoing_message = (char) 0xD0;
 			*(outgoing_message + 1) = 0x00;
 			conn->message_size = 2;
 			break;
 		default:
-			log_error("Not implemented / unsupported.");
+			log_error("Not implemented / unsupported from %s", conn->client_id);
 			conn->delete_me = 1;
 			break;
 	}
 
 	if (conn->type != MQTT_PUBLISH && conn->type != MQTT_DISCONNECT) {
-		free(conn->message);
+		if (conn->type != MQTT_PINGREQ)
+			free(conn->message);
 		// no answer to sender in PUBLISH message (in QoS 0)
 		conn->message = outgoing_message;
 		conn->state = 1;
 	}
 
-	print_conns(conns);
+	if (conn->type == MQTT_PUBLISH && !publish_send_to_sender) {
+		clear_message(conn, 1);
+	}
+
+	// print_conns(conns);
 }
 
 void
@@ -506,7 +488,7 @@ check_and_process_mqtt_messages(struct connections *conns) {
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (conn->message_size != 0) {
+		if (conn->message_size != 0 && conn->state == 0) {
 			process_mqtt_message(conn, conns);
 		}
 	}
@@ -546,7 +528,7 @@ clear_connections(struct connections *conns) {
 			}
 
 			conns->count--;
-			free(conn->message);
+			// free(conn->message);
 			free(conn->client_id);
 			delete_topics_list(conn->topics);
 			free(conn);
@@ -594,7 +576,7 @@ main(int argc, char* argv[]) {
 			case 'p':
 				portstr = calloc(strlen(optarg), sizeof(char));
 				if (!portstr)
-        			err(1, "main calloc portstr");
+					err(1, "main calloc portstr");
 				portstr = strcpy(portstr, optarg);
 				break;
 			default:

@@ -15,7 +15,7 @@ typedef struct publish publish_t;
 publish_t *
 read_publish_message(conn_t *conn, char *incoming_message);
 
-void
-send_published_message(conns_t *conns, publish_t *publish);
+int
+send_published_message(conn_t *sender_conn, conns_t *conns, publish_t *publish);
 
 #endif

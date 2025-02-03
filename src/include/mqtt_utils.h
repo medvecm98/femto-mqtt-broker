@@ -12,4 +12,7 @@ from_val_len_to_uint(char *buffer);
 char *
 from_uint_to_val_len(int val);
 
+void
+print_message_sizes(conns_t *conns, char* label);
+
 #endif

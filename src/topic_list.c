@@ -62,9 +62,10 @@ remove_topic(topics_t *list, char *topic_str) {
     for (topic_t *topic = list->back; topic != NULL; topic = topic->next) {
         if (strcmp(topic->topic, topic_str) == 0) {
             free(topic->topic);
-            // for (int i = 0; topic->topic_token_count; i++) {
-            //     free(topic->tokenized_topic + i);
-            // }
+            for (int i = 0; topic->topic_token_count; i++) {
+                free(topic->tokenized_topic[i]);
+            }
+            free(topic->tokenized_topic);
             if (prev_topic != NULL) {
                 prev_topic->next = topic->next;
                 if (topic == list->head)
@@ -119,6 +120,10 @@ delete_topics_list(topics_t *list) {
 
     for (topic_t *topic = list->back; topic != NULL; topic = topic->next) {
         free(topic->topic);
+        for (int i = 0; i < topic->topic_token_count; i++) {
+            free(topic->tokenized_topic[i]);
+        }
+        free(topic->tokenized_topic);
         if (prev_topic)
             free(prev_topic);
         prev_topic = topic;

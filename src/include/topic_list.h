@@ -1,5 +1,6 @@
 #ifndef FEMTO_MQTT_TOPIC_LIST_H
 #define FEMTO_MQTT_TOPIC_LIST_H
+#define _GNU_SOURCE
 
 #include <string.h>
 #include <stdlib.h>
