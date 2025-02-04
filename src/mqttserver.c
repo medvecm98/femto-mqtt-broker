@@ -11,11 +11,15 @@
 #define READ_SIZE 256
 #define RCVD_SIZE_DEFAULT 4096
 #define OUTGOING_SIZE_DEFAULT 4096
-#define POLL_WAIT_TIME 20
+#define POLL_WAIT_TIME 10
 
 static conns_t *global_conns = NULL;
 static volatile int interrupt_received = 0;
 
+/**
+ * Sigaction handler for SIGINT and SIGSTOP. Sets global flag for indicating
+ * that signal was fired, and that server must halt.
+ */
 void
 sigaction_handler(int sig) {
 	log_warn("Interrupt received, server terminating.");
@@ -30,7 +34,12 @@ sigaction_handler(int sig) {
  * - read buffer about 4 KiB
  */
 
-
+/**
+ * Clears message size, its incoming/outgoing state and other metadata. Also
+ * frees space, if requested.
+ * 
+ * \param should_free If non-zero, will free memory occupied by message.
+ */
 void
 clear_message(struct connection *conn, int should_free) {
 	if (should_free) {
@@ -43,6 +52,13 @@ clear_message(struct connection *conn, int should_free) {
 	conn->packet_id = 0;
 }
 
+/**
+ * Adds new connection into conns linked lists. Allocates memory as needed.
+ * Data are set to their default values.
+ * 
+ * \param conns Connections linked list.
+ * \param fd File descriptor of socket of given connected peer, for polling.
+ */
 void
 add_connection(struct connections *conns, int fd) {
 	struct connection *new_connection = calloc(1, sizeof(struct connection));
@@ -52,8 +68,6 @@ add_connection(struct connections *conns, int fd) {
 
 	new_connection->next = NULL;
 	new_connection->prev = NULL;
-	// new_connection->next_topic_index = 0;
-	// memset(&new_connection->pfd, 0, sizeof(struct pollfd));
 
 	// set 'back' if it is NULL
 	if (!conns->conn_back) {
@@ -87,6 +101,14 @@ add_connection(struct connections *conns, int fd) {
 	clear_message(new_connection, 0);
 }
 
+/**
+ * Tries to find available address and bind to it. Socket may be used for
+ * listening afterwards.
+ * 
+ * \param portstr Port number to be used, in string form.
+ * 
+ * \returns File descriptor of bound socket.
+ */
 int
 find_connection(char* portstr) {
 	int sock_fd = 0;
@@ -106,8 +128,12 @@ find_connection(char* portstr) {
 		sock_fd = socket(info->ai_family, info->ai_socktype, info->ai_protocol);
 
 		int opt = 1;
-		if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+		if (setsockopt(
+				sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)
+			) == -1
+		) {
 			err(1, "setsockopt (for main listening socket)");
+		}
 
 		if (sock_fd == -1)
 			err(1, "socket");
@@ -126,6 +152,9 @@ find_connection(char* portstr) {
 	return sock_fd;
 }
 
+/**
+ * Initialize connections linked list.
+ */
 void
 conns_init(struct connections *conns) {
 	memset(conns, 0, sizeof(struct connections));
@@ -134,6 +163,9 @@ conns_init(struct connections *conns) {
 	conns->conn_head = NULL;
 }
 
+/**
+ * Return MQTT control packet type.
+ */
 ctrl_packet_t
 get_mqtt_type(uint8_t packet_type_flags) {
 	unsigned int type = packet_type_flags & 0xF0;
@@ -141,6 +173,11 @@ get_mqtt_type(uint8_t packet_type_flags) {
 	return (ctrl_packet_t) type;
 }
 
+/**
+ * Checks correct flag settings for (UN)SUBSCRIBE MQTT control packets.
+ * 
+ * \returns Zero if they don't match, non-zero otherwise.
+ */
 uint8_t
 check_subscribe_flags(uint8_t packet_type_flags) {
 	if ((packet_type_flags & 0x0F) != 0x02)
@@ -149,6 +186,13 @@ check_subscribe_flags(uint8_t packet_type_flags) {
 		return 1;
 }
 
+/**
+ * Checks correct flag settings for all MQTT control packets but (UN)SUBSCRIBE.
+ * CONNECT control packet does not support Clean session (or rather it only
+ * supports clean session set to 1).
+ * 
+ * \returns Zero if they don't match, non-zero otherwise.
+ */
 uint8_t
 check_zeroed_flags(uint8_t packet_type_flags) {
 	if ((packet_type_flags & 0x0F) != 0x00)
@@ -157,6 +201,19 @@ check_zeroed_flags(uint8_t packet_type_flags) {
 		return 1;
 }
 
+/**
+ * \brief Processes all data in MQTT control packet that follows after fixed
+ * header.
+ * 
+ * For packets that don't contain any additional information besides fixed
+ * header, method will set control packet type, and return.
+ * 
+ * If format of packet is incorrect, connection will be terminated.
+ * Otherwise message and its size is appropriately set for given peer.
+ * 
+ * \param conn Connection linked list entry.
+ * \param fixed_header Fixed header in byte form.
+ */
 void
 process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 	char packet_type_flags = fixed_header[0];
@@ -179,7 +236,9 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 	}
 	else {
 		if (!check_zeroed_flags(packet_type_flags)) {
-			log_warn("Invalid flags for control packet (first byte of fixed header).");
+			log_warn(
+				"Invalid flags for control packet (first byte of fixed header)."
+			);
 			conn->delete_me = 1;
 		}
 	}
@@ -193,7 +252,10 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 	ssize_t bytes_read = read(fd, buffer, rem_len);
 	ssize_t bytes_read_acc = bytes_read;
 	while (bytes_read_acc < rem_len && bytes_read > 0) {
-		bytes_read = read(fd, buffer + bytes_read_acc, rem_len - bytes_read_acc);
+		// loop until everything was read
+		bytes_read = read(
+			fd, buffer + bytes_read_acc, rem_len - bytes_read_acc
+		);
 		if (bytes_read == -1)
 			err(1, "process incoming data read");
 		bytes_read_acc += bytes_read;
@@ -204,12 +266,10 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 	else if (bytes_read_acc != rem_len) {
 		log_error("Message read and remaining length values don't match.");
 		conn->delete_me = 1;
-		// free(buffer);
 	}
 	else if (bytes_read == 0) {
 		log_error("No bytes were read.");
 		conn->delete_me = 1;
-		// free(buffer);
 	}
 	else {
 		conn->message_size = rem_len;
@@ -217,6 +277,9 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 	}
 }
 
+/**
+ * Prints all connections. For debugging purposes only.
+ */
 void
 print_conns(struct connections* conns) {
 	if (conns->count == 0) {
@@ -253,15 +316,16 @@ print_conns(struct connections* conns) {
 	}
 }
 
-void
-print_message(struct connection* conn) {
-	char* s = "M: ";
-	for (int i = 0; i < conn->message_size; i++) {
-	//	asprintf(&s, "%s%02x ", s, conn->message[i]);
-	}
-	log_debug(s);
-}
-
+/**
+ * \brief Reads fixed header from socket file descriptor.
+ * 
+ * Remaining length is dynamically read as needed. Invalid remaining length
+ * value will cause the connection to terminate.
+ * 
+ * \param conn Connection.
+ * 
+ * \returns Allocated buffer containing fixed header in bytes.
+ */
 char*
 read_fixed_header(conn_t *conn) {
 	char *buffer = calloc(6, 1);
@@ -270,19 +334,20 @@ read_fixed_header(conn_t *conn) {
 	ssize_t read_bytes = 0;
 	ssize_t read_bytes_acc = 0;
 
+	// read control packet type/flags and first remaining length byte
 	read_bytes = read(conn->pfd.fd, buffer, 2);
 	read_bytes_acc += read_bytes;
-	// log_debug("read bytes: %d, acc: %d", read_bytes, read_bytes_acc);
 
 	if (read_bytes == 0) {
-		// conn->delete_me = 1;
 		conn->skip_me = 1;
 		return NULL;
 	}
 
 	// read packet control type and first remaining length byte
 	while (read_bytes_acc < 2) {
-		read_bytes = read(conn->pfd.fd, buffer + read_bytes_acc, 2 - read_bytes_acc);
+		read_bytes = read(
+			conn->pfd.fd, buffer + read_bytes_acc, 2 - read_bytes_acc
+		);
 		read_bytes_acc += read_bytes;
 	}
 
@@ -301,17 +366,10 @@ read_fixed_header(conn_t *conn) {
 	return buffer;
 }
 
-void
-print_hex(char *buffer) {
-	char* s = "Hex: ";
-	for (int i = 0; i < strlen(buffer); i++) {
-	//	asprintf(&s, "%s%02x ", s, buffer[i]);
-	}
-	log_debug(s);
-}
-
 /**
  * Checks for POLLIN `poll` flag in active connections.
+ * 
+ * If yes, message is read from socket.
  * 
  * \param conns pointer to connections structure
  */
@@ -334,19 +392,22 @@ check_poll_in(struct connections *conns) {
 		}
 
 		if (conn->pfd.revents & POLLIN) {
-			log_debug("Found POLLIN");
 			char *fixed_header = read_fixed_header(conn);
 			if (!fixed_header && !conn->delete_me) {
 				continue;
 			}
-			// print_hex(fixed_header);
 			process_incoming_data_from_client(conn, fixed_header);
-			// print_message(conn);
 			free(fixed_header);
 		}
 	}
 }
 
+/**
+ * Polling for listening socket, waiting for new connections.
+ * 
+ * \param conns Connections linked list.
+ * \param listening_pfd `struct pollfd` with listeinig socket fd.
+ */
 void
 poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
 	int nfd = -1;
@@ -361,11 +422,15 @@ poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
 	if (listening_pfd->revents & POLLIN) {
 		if ((nfd = accept(listening_pfd->fd, NULL, NULL)) == -1)
 			err(3, "accept");
-		log_debug("accepted");
 		add_connection(conns, nfd);
 	}
 }
 
+/**
+ * Checks for POLLHUP `poll` flag in active connections.
+ * 
+ * \param conns pointer to connections structure
+ */
 void
 check_poll_hup(struct connections *conns) {
 	for (
@@ -381,12 +446,19 @@ check_poll_hup(struct connections *conns) {
 		}
 
 		if (conn->pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
-			log_debug("Found POLLHUP\n");
 			conn->delete_me = 1;
 		}
 	}
 }
 
+/**
+ * Checks for POLLOUT `poll` flag in active connections.
+ * 
+ * If yes, if any message is waiting to be sent (in state 1) and with non-zero
+ * message length, it is written to appropriate socket.
+ * 
+ * \param conns pointer to connections structure
+ */
 void
 check_poll_out(struct connections *conns) {
 	for (
@@ -401,21 +473,25 @@ check_poll_out(struct connections *conns) {
 			err(1, "poll out check");
 		}
 
-		if (conn->state == 1 && conn->message_size > 0 && conn->pfd.revents & POLLOUT) {
-			// log_debug("Found POLLOUT");
-			if (conn->type == MQTT_PUBLISH)
-				log_trace("publish...");
+		if (conn->state == 1 &&
+			conn->message_size > 0 &&
+			conn->pfd.revents & POLLOUT
+		) {
 			write(conn->pfd.fd, conn->message, conn->message_size);
 			clear_message(conn, 1);
 		}
 	}
 }
 
-void
-print_index(char *index) {
-	log_trace("index: %#04x\n", *index);
-}
-
+/**
+ * Processes MQTT control packet data in variable header and payload.
+ * 
+ * For some control packets, replies are directly contstructed and sent. Others
+ * need to construct and set the message to be sent manually.
+ * 
+ * \param conn Connection that send the control packet.
+ * \param conns Connections linked list.
+ */
 void
 process_mqtt_message(struct connection *conn, struct connections *conns) {
 	char *incoming_message, *outgoing_message;
@@ -427,14 +503,12 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 
 	if (conn->type != MQTT_CONNECT && conn->seen_connect_packet == 0) {
 		conn->delete_me = 1;
-		// print_conns(conns);
 		return;
 	}
 
 	int publish_send_to_sender = 0;
 	switch (conn->type) {
 		case MQTT_CONNECT:
-			log_debug("Received CONNECT");
 			if (conn->seen_connect_packet == 1) {
 				conn->delete_me = 1;
 				print_conns(conns);
@@ -449,32 +523,38 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			conn->delete_me = 1;
 			break;
 		case MQTT_SUBSCRIBE:
-			log_debug("Received SUBSCRIBE from %s", conn->client_id);
 			conn->last_topic_before_insert = conn->topics->head;
-			topics_inserted_code = read_un_subscribe_message(conn, incoming_message);
-			outgoing_message = create_un_subscribe_response(conn, conns, topics_inserted_code);
-			print_conns(conns);
+			topics_inserted_code = read_un_subscribe_message(
+				conn, incoming_message
+			);
+			outgoing_message = create_un_subscribe_response(
+				conn, conns, topics_inserted_code
+			);
 			break;
 		case MQTT_UNSUBSCRIBE:
-			log_debug("Received UNSUBSCRIBE from %s", conn->client_id);
 			conn->last_topic_before_insert = conn->topics->head;
-			topics_inserted_code = read_un_subscribe_message(conn, incoming_message);
-			outgoing_message = create_un_subscribe_response(conn, conns, topics_inserted_code);
-			print_conns(conns);
+			topics_inserted_code = read_un_subscribe_message(
+				conn, incoming_message
+			);
+			outgoing_message = create_un_subscribe_response(
+				conn, conns, topics_inserted_code
+			);
 			break;
 		case MQTT_PUBLISH:
 			;
-			log_debug("Received PUBLISH from %s", conn->client_id);
 
-			publish_t *publish = read_publish_message(conn, incoming_message);
-			publish_send_to_sender = send_published_message(conn, conns, publish);
+			publish_t *publish = read_publish_message(
+				conn, incoming_message
+			);
+			publish_send_to_sender = send_published_message(
+				conn, conns, publish
+			);
 
 			free(publish->topic);
 			free(publish->message);
 			free(publish);
 			break;
 		case MQTT_PINGREQ:
-			log_debug("Received ping from %s", conn->client_id);
 			outgoing_message = calloc(2, 1);
 			if (!outgoing_message)
 				err(1, "process mqtt msg calloc outgoing_message");
@@ -489,6 +569,8 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 	}
 
 	if (conn->type != MQTT_PUBLISH && conn->type != MQTT_DISCONNECT) {
+		/* PUBLISH and DISCONNECT don't have direct replies, no outgoing
+		 * message needs to be sent */
 		if (conn->type != MQTT_PINGREQ)
 			free(conn->message);
 		// no answer to sender in PUBLISH message (in QoS 0)
@@ -497,12 +579,15 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 	}
 
 	if (conn->type == MQTT_PUBLISH && !publish_send_to_sender) {
+		// if peer is not publishing to itself, its message needs to be cleared
 		clear_message(conn, 1);
 	}
-
-	// print_conns(conns);
 }
 
+/**
+ * Process MQTT control packets (messages), if any were received after last
+ * check.
+ */
 void
 check_and_process_mqtt_messages(struct connections *conns) {
 	for (
@@ -516,6 +601,10 @@ check_and_process_mqtt_messages(struct connections *conns) {
 	}
 }
 
+/**
+ * Shutdown and close sockets of connection marked as to be disconnected, or
+ * those that already disconnected are.
+ */
 void
 clear_connections(struct connections *conns) {
 	struct connection *prev, *next;
@@ -550,7 +639,6 @@ clear_connections(struct connections *conns) {
 			}
 
 			conns->count--;
-			// free(conn->message);
 			free(conn->client_id);
 			delete_topics_list(conn->topics);
 			free(conn);
@@ -558,58 +646,10 @@ clear_connections(struct connections *conns) {
 	}
 }
 
-void
-clear_connections_signal_safe(struct connections *conns) {
-	struct connection *prev, *next;
-	for (
-		struct connection* conn = conns->conn_back;
-		conn != NULL;
-		conn = next
-	) {
-		next = conn->next;
-		if (conn->delete_me) {
-			if (shutdown(conn->pfd.fd, SHUT_RDWR) == -1) {
-				err(12, "shutdown fail");
-			}
-			if (close(conn->pfd.fd) == -1) {
-				err(1, "closing fd when deleting connection");
-			}
-
-			prev = conn->prev;
-
-			if (prev)
-				prev->next = next;
-
-			if (next)
-				next->prev = prev;
-			
-			if (conn == conns->conn_back) {
-				conns->conn_back = next;
-			}
-
-			if (conn == conns->conn_head) {
-				conns->conn_head = prev;
-			}
-
-			conns->count--;
-		}
-	}
-}
-
-// void
-// sigaction_handler(int sig) {
-// 	log_warn("Interrupt received, server terminating.");
-// 	for (
-// 		conn_t *conn = global_conns->conn_back;
-// 		conn != NULL;
-// 		conn = conn->next
-// 	) {
-// 		conn->delete_me = 1;
-// 	}
-// 	clear_connections_signal_safe(global_conns);
-// 	exit(0);
-// }
-
+/**
+ * Check that all MQTT clients are still alive (if their respective keep alive
+ * value is non-zero).
+ */
 void
 check_keep_alive(conns_t *conns) {
 	for (
@@ -646,6 +686,8 @@ main(int argc, char* argv[]) {
 		
 	}
 
+	log_info("Femto MQTT broker starting.");
+
 	int nclients = SIZE;
 
 	struct sigaction sa = { 0 };
@@ -662,6 +704,8 @@ main(int argc, char* argv[]) {
 
 	if (listen(sock_fd, nclients) == -1)
 		err(3, "listen");
+
+	log_info("Listening on port %s.", portstr);
 
 	struct pollfd listening_pfd;
 	listening_pfd.fd = sock_fd;
