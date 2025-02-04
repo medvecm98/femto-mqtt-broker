@@ -1,5 +1,10 @@
 #include "mqtt_subscribe.h"
 
+/**
+ * Parses 16-bit BE value into (UN)SUBSCRIBE control packet "packet id".
+ * 
+ * \returns Packet ID.
+ */
 uint16_t
 get_packet_id(char* index) {
     uint8_t *index8 = (uint8_t*) index;
@@ -9,6 +14,13 @@ get_packet_id(char* index) {
     return packet_id;
 }
 
+/**
+ * Reads following from (UN)SUBSCRIBE control packet variable header:
+ * 
+ * Packet id. Saved into connection struct.
+ * 
+ * \returns Always zero.
+ */
 int
 read_variable_header(conn_t *conn, char *incoming_message) {
     char *index = incoming_message;
@@ -19,6 +31,16 @@ read_variable_header(conn_t *conn, char *incoming_message) {
     return 0;
 }
 
+/**
+ * Reads following from (UN)SUBSCRIBE control packet payload:
+ * 
+ * Topics, first their size in 16-bit BE format, then their contents. Loops
+ * as long as there should be something to read (calculated from remaining
+ * length in fixed header of control packet). Based on control packet type,
+ * topic is inserted (SUBSCRIBE) or removed (UNSUBSCRIBE).
+ * 
+ * \returns Number of topics read.
+ */
 int
 read_payload(conn_t *conn, char *incoming_message) {
     char *index = incoming_message;
@@ -35,12 +57,14 @@ read_payload(conn_t *conn, char *incoming_message) {
     int topic_counter = 0;
     char *topic;
     while (rem_len > 0) {
+        // read length
         length = index[0];
         length <<= 8;
         length |= index[1];
         index += 2;
         rem_len -= 2;
 
+        // read payload
         topic = calloc(length + 1, sizeof(char));
         if (!topic)
             err(1, "read payload subscribe calloc topic");
@@ -56,11 +80,10 @@ read_payload(conn_t *conn, char *incoming_message) {
 
         if (conn->type == MQTT_SUBSCRIBE) {
             insert_topic(conn->topics, topic, 0x00);
-            log_trace("Subscribed to topic: %s", topic);
-            log_trace("Subscribed to topic (len): %d", length);
             free(topic);
         }
         else {
+            // UNSUBSCRIBE control packet
             remove_topic(conn->topics, topic);
             free(topic);
         }
@@ -71,6 +94,11 @@ read_payload(conn_t *conn, char *incoming_message) {
     return topic_counter;
 }
 
+/**
+ * Reads variable header and payload.
+ * 
+ * \returns Number of topics found.
+ */
 int
 read_un_subscribe_message(conn_t *conn, char *incoming_message) {
     char *index = incoming_message;
@@ -82,6 +110,16 @@ read_un_subscribe_message(conn_t *conn, char *incoming_message) {
     return topic_counter;
 }
 
+/**
+ * Create response to SUBSCRIBE MQTT control packet.
+ * 
+ * Packet id is restored from connection struct. Answers to topics are inserted
+ * one after another, always with QoS set to 0.
+ * 
+ * Message size is set.
+ * 
+ * \returns SUBACK MQTT control packet, in bytes.
+ */
 char *
 create_suback_message(conn_t *conn, int topic_counter) {
     char *buffer = calloc(4 + topic_counter, sizeof(char));
@@ -132,6 +170,15 @@ create_suback_message(conn_t *conn, int topic_counter) {
     return buffer_orig;
 }
 
+/**
+ * Create response to UNSUBSCRIBE MQTT control packet.
+ * 
+ * Packet id is restored from connection struct.
+ * 
+ * Message size is set.
+ * 
+ * \returns UNSUBACK MQTT control packet, in bytes.
+ */
 char *
 create_unsuback_message(conn_t *conn) {
     char* buffer = calloc(4, sizeof(char));
@@ -148,8 +195,19 @@ create_unsuback_message(conn_t *conn) {
     return buffer;
 }
 
+/**
+ * Based on MQTT control packet type, correct response is created.
+ * 
+ * For SUBSCRIBE packet we have SUBACK packet.
+ * 
+ * For UNSUBSCRIBE packet we have UNSUBACK packet.
+ * 
+ * \returns (UN)SUBACK MQTT control packet, in bytes.
+ */
 char *
-create_un_subscribe_response(conn_t *conn, conns_t *conns, int topics_inserted_code) {
+create_un_subscribe_response(
+    conn_t *conn, conns_t *conns, int topics_inserted_code
+) {
     if (topics_inserted_code == -1) {
         conn->delete_me = 1;
         return NULL;
