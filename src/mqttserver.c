@@ -537,6 +537,44 @@ clear_connections(struct connections *conns) {
 }
 
 void
+clear_connections_signal_safe(struct connections *conns) {
+	struct connection *prev, *next;
+	for (
+		struct connection* conn = conns->conn_back;
+		conn != NULL;
+		conn = next
+	) {
+		next = conn->next;
+		if (conn->delete_me) {
+			if (shutdown(conn->pfd.fd, SHUT_RDWR) == -1) {
+				err(12, "shutdown fail");
+			}
+			if (close(conn->pfd.fd) == -1) {
+				err(1, "closing fd when deleting connection");
+			}
+
+			prev = conn->prev;
+
+			if (prev)
+				prev->next = next;
+
+			if (next)
+				next->prev = prev;
+			
+			if (conn == conns->conn_back) {
+				conns->conn_back = next;
+			}
+
+			if (conn == conns->conn_head) {
+				conns->conn_head = prev;
+			}
+
+			conns->count--;
+		}
+	}
+}
+
+void
 sigaction_handler(int sig) {
 	log_warn("Interrupt received, server terminating.");
 	for (
@@ -546,7 +584,7 @@ sigaction_handler(int sig) {
 	) {
 		conn->delete_me = 1;
 	}
-	clear_connections(global_conns);
+	clear_connections_signal_safe(global_conns);
 	exit(0);
 }
 
