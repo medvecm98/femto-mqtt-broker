@@ -62,7 +62,7 @@ remove_topic(topics_t *list, char *topic_str) {
     for (topic_t *topic = list->back; topic != NULL; topic = topic->next) {
         if (strcmp(topic->topic, topic_str) == 0) {
             free(topic->topic);
-            for (int i = 0; topic->topic_token_count; i++) {
+            for (int i = 0; i < topic->topic_token_count; i++) {
                 free(topic->tokenized_topic[i]);
             }
             free(topic->tokenized_topic);
