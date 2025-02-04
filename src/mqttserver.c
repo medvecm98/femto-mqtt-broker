@@ -5,6 +5,7 @@
 #include "mqtt_publish.h"
 #include <signal.h>
 #include <time.h>
+#include <errno.h>
 
 #define SIZE 256
 #define READ_SIZE 256
@@ -13,6 +14,14 @@
 #define POLL_WAIT_TIME 20
 
 static conns_t *global_conns = NULL;
+static volatile int interrupt_received = 0;
+
+void
+sigaction_handler(int sig) {
+	log_warn("Interrupt received, server terminating.");
+	
+	interrupt_received = 1;
+}
 
 /**
  * NOTES:
@@ -317,8 +326,12 @@ check_poll_in(struct connections *conns) {
 	) {
 		if (conn->skip_me) continue;
 
-		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
+		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
+			if (errno == EINTR) {
+				return;
+			}
 			err(1, "poll in check");
+		}
 
 		if (conn->pfd.revents & POLLIN) {
 			log_debug("Found POLLIN");
@@ -339,8 +352,11 @@ poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
 	int nfd = -1;
 	listening_pfd->events = POLLIN;
 
-	if (poll(listening_pfd, 1, POLL_WAIT_TIME) == -1)
+	if (poll(listening_pfd, 1, POLL_WAIT_TIME) == -1) {
+		if (errno == EINTR)
+			return;
 		err(1, "poll listening pfd");
+	}
 
 	if (listening_pfd->revents & POLLIN) {
 		if ((nfd = accept(listening_pfd->fd, NULL, NULL)) == -1)
@@ -358,8 +374,11 @@ check_poll_hup(struct connections *conns) {
 		conn = conn->next
 	) {
 		if (conn->skip_me) continue;
-		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
+		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
+			if (errno == EINTR)
+				return;
 			err(1, "poll hup check");
+		}
 
 		if (conn->pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
 			log_debug("Found POLLHUP\n");
@@ -376,8 +395,11 @@ check_poll_out(struct connections *conns) {
 		conn = conn->next
 	) {
 		if (conn->skip_me) continue;
-		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1)
+		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
+			if (errno == EINTR)
+				return;
 			err(1, "poll out check");
+		}
 
 		if (conn->state == 1 && conn->message_size > 0 && conn->pfd.revents & POLLOUT) {
 			// log_debug("Found POLLOUT");
@@ -574,19 +596,19 @@ clear_connections_signal_safe(struct connections *conns) {
 	}
 }
 
-void
-sigaction_handler(int sig) {
-	log_warn("Interrupt received, server terminating.");
-	for (
-		conn_t *conn = global_conns->conn_back;
-		conn != NULL;
-		conn = conn->next
-	) {
-		conn->delete_me = 1;
-	}
-	clear_connections_signal_safe(global_conns);
-	exit(0);
-}
+// void
+// sigaction_handler(int sig) {
+// 	log_warn("Interrupt received, server terminating.");
+// 	for (
+// 		conn_t *conn = global_conns->conn_back;
+// 		conn != NULL;
+// 		conn = conn->next
+// 	) {
+// 		conn->delete_me = 1;
+// 	}
+// 	clear_connections_signal_safe(global_conns);
+// 	exit(0);
+// }
 
 void
 check_keep_alive(conns_t *conns) {
@@ -628,6 +650,7 @@ main(int argc, char* argv[]) {
 
 	struct sigaction sa = { 0 };
 	sa.sa_handler = &sigaction_handler;
+	sa.sa_flags = SA_RESTART;
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 
@@ -644,15 +667,33 @@ main(int argc, char* argv[]) {
 	listening_pfd.fd = sock_fd;
 	for (;;) {
 		poll_and_accept(&conns, &listening_pfd);
-
+		if (interrupt_received) break;
 		check_poll_hup(&conns);
+		if (interrupt_received) break;
 		clear_connections(&conns);
+		if (interrupt_received) break;
 		check_poll_in(&conns);
+		if (interrupt_received) break;
 		check_and_process_mqtt_messages(&conns);
+		if (interrupt_received) break;
 		check_poll_out(&conns);
+		if (interrupt_received) break;
 		check_keep_alive(&conns);
+		if (interrupt_received) break;
 		clear_connections(&conns);
+		if (interrupt_received) break;
 	}
+
+	for (
+		conn_t *conn = global_conns->conn_back;
+		conn != NULL;
+		conn = conn->next
+	) {
+		conn->delete_me = 1;
+	}
+	clear_connections(&conns);
+
+	log_info("Server exiting.");
 
 	return 0;
 }
