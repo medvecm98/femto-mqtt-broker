@@ -1,6 +1,6 @@
 all: mqttserver
 
-CFLAGS = -I src/include
+CFLAGS = -Wall -std=c99 -Werror=pedantic -D_POSIX_C_SOURCE=200809L -I src/include -O0 -g
 
 src/log.o: src/include/log.h src/log.c
 	pwd
@@ -22,7 +22,8 @@ src/topic_list.o: src/include/topic_list.h src/topic_list.c
 	$(CC) -c $(CFLAGS) -o src/topic_list.o src/topic_list.c
 
 mqttserver: src/log.o src/mqtt_connect.o src/mqtt_publish.o src/mqtt_subscribe.o src/mqtt_utils.o src/topic_list.o src/mqttserver.c
-	$(CC) -Wall -std=c99 -Werror=pedantic -D_POSIX_C_SOURCE=200809L $(CFLAGS) -O0 -g src/mqttserver.c src/log.o src/mqtt_connect.o src/mqtt_publish.o src/mqtt_subscribe.o src/mqtt_utils.o src/topic_list.o -o mqttserver
+	$(CC) $(CFLAGS) src/mqttserver.c src/log.o src/mqtt_connect.o src/mqtt_publish.o src/mqtt_subscribe.o src/mqtt_utils.o src/topic_list.o -o mqttserver
 
 clean:
-	rm mqttserver
+	rm -f mqttserver
+	rm -f src/*.o
