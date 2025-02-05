@@ -723,7 +723,7 @@ main(int argc, char* argv[]) {
 	}
 
 	for (
-		conn_t *conn = global_conns->conn_back;
+		conn_t *conn = conns.conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
