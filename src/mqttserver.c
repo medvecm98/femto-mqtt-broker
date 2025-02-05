@@ -8,9 +8,6 @@
 #include <errno.h>
 
 #define SIZE 256
-#define READ_SIZE 256
-#define RCVD_SIZE_DEFAULT 4096
-#define OUTGOING_SIZE_DEFAULT 4096
 #define POLL_WAIT_TIME 10
 
 static conns_t *global_conns = NULL;
