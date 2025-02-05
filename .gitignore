@@ -53,5 +53,8 @@ Mkfile.old
 dkms.conf
 
 .vscode
-tests/
+tests/__pycache__
+tests/venv
+tests/functional/__pycache__
+tests/.pytest_cache
 vgcore*
