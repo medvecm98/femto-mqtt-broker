@@ -158,7 +158,7 @@ insert_topic_checked(topics_t *list, char *topic_str, int qos_code) {
  * \returns New topic linked list.
  */
 topics_t *
-create_topics_list() {
+create_topics_list(void) {
     topics_t *list = calloc(1, sizeof(topics_t));
     if (!list)
         err(1, "create topic list calloc list");
