@@ -306,7 +306,9 @@ print_conns(struct connections* conns) {
 		) {
 			log_debug(".%d.%d. topic: %s", i, j, topic->topic);
 			for (int k = 0; k < topic->topic_token_count; k++) {
-				log_debug(".%d.%d.%d. token: %s", i, j, k, topic->tokenized_topic[k]);
+				log_debug(
+					".%d.%d.%d. token: %s", i, j, k, topic->tokenized_topic[k]
+				);
 			}
 			log_debug(".%d.%d. QoS code: %#04x", i, j, topic->qos_code);
 			j++;
