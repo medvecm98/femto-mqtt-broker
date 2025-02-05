@@ -10,7 +10,6 @@
 #define SIZE 256
 #define POLL_WAIT_TIME 10
 
-static conns_t *global_conns = NULL;
 static volatile int interrupt_received = 0;
 
 /**
@@ -650,7 +649,7 @@ clear_connections(struct connections *conns) {
 void
 check_keep_alive(conns_t *conns) {
 	for (
-		conn_t *conn = global_conns->conn_back;
+		conn_t *conn = conns->conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
@@ -697,8 +696,6 @@ main(int argc, char* argv[]) {
 	struct connections conns;
 	conns_init(&conns);
 	
-	global_conns = &conns;
-
 	if (listen(sock_fd, nclients) == -1)
 		err(3, "listen");
 
