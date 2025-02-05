@@ -149,8 +149,6 @@ read_connect_message(conns_t *conns, conn_t *conn, char* incoming_message) {
 		return 3;
 	}
 
-	log_debug("client id: %s", client_id);
-
 	conn->client_id = client_id;
 
 	return 0;

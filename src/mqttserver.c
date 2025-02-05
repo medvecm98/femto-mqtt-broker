@@ -282,7 +282,7 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 void
 print_conns(struct connections* conns) {
 	if (conns->count == 0) {
-		// log_debug("No connections were found.");
+		log_debug("No connections were found.");
 		return;
 	}
 	log_debug("Printing connections:");
