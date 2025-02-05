@@ -28,7 +28,7 @@ get_client_id(char *index) {
 	
 	char *client_id = calloc(client_id_length + 1, 1);
 	if (!client_id)
-        err(1, "get client_id calloc client_id");
+		err(1, "get client_id calloc client_id");
 	memcpy(client_id, index8, client_id_length);
 
 	return client_id;
@@ -41,7 +41,7 @@ char *
 create_connack_message(uint8_t return_code) {
 	char *buffer = calloc(4, sizeof(char));
 	if (!buffer)
-        err(1, "create connack calloc buffer");
+		err(1, "create connack calloc buffer");
 
 	buffer[0] = 0x02 << 4; // control packet type
 	buffer[1] = 0x02; // remaining length
@@ -115,7 +115,7 @@ int
 read_connect_message(conns_t *conns, conn_t *conn, char* incoming_message) {
 	char *index = incoming_message;
 
-    /* variable header */
+	/* variable header */
 
 	if (!check_protocol_name(index)) {
 		log_error("Invalid protocol name in CONNECT variable header.");
@@ -135,7 +135,7 @@ read_connect_message(conns_t *conns, conn_t *conn, char* incoming_message) {
 	conn->keep_alive = get_keep_alive(index);
 	index += 2;
 
-    /* payload */
+	/* payload */
 
 	char *client_id = get_client_id(index);
 
