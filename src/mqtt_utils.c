@@ -54,14 +54,3 @@ from_uint_to_val_len(int val) {
 
 	return output;
 }
-
-void
-print_message_sizes(conns_t *conns, char* label) {
-	for (
-		conn_t *conn = conns->conn_back;
-		conn != NULL;
-		conn = conn->next
-	) {
-		log_debug("%s: %s: %d", label, conn->client_id, conn->message_size);
-	}
-}

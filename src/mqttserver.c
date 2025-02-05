@@ -220,7 +220,6 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
 	int fd = conn->pfd.fd;
 
 	conn->type = get_mqtt_type((uint8_t) packet_type_flags);
-	// log_debug("Type received: %d", conn->type);
 
 	if (conn->type == MQTT_PINGREQ || conn->type == MQTT_DISCONNECT) {
 		// for messages with empty remaining length
@@ -511,7 +510,6 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 		case MQTT_CONNECT:
 			if (conn->seen_connect_packet == 1) {
 				conn->delete_me = 1;
-				print_conns(conns);
 				return;
 			}
 			conn->seen_connect_packet = 1;
@@ -648,7 +646,7 @@ clear_connections(struct connections *conns) {
 
 /**
  * Check that all MQTT clients are still alive (if their respective keep alive
- * value is non-zero).
+ * value is positive).
  */
 void
 check_keep_alive(conns_t *conns) {

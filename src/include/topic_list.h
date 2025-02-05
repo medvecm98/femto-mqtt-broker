@@ -7,19 +7,28 @@
 #include <err.h>
 #include "log.h"
 
+/**
+ * Topic linked list entry. Contains all topic-related data.
+ */
 struct topic {
-    char **tokenized_topic;
-    char *topic;
-    int topic_token_count;
-    int qos_code;
-    struct topic *next;
+    char **tokenized_topic; // array of tokens of tokenized topic
+    char *topic; // topic in its string (pre-tokenization) form
+    int topic_token_count; // how many tokens is topic composed of
+    int qos_code; // qos code for this topic
+    struct topic *next; // next topic in topic linked list
 };
 
+/**
+ * Topic linked list entry. Contains all topic-related data.
+ */
 typedef struct topic topic_t;
 
+/**
+ * Topic linked list. Contains all topics that given client is subscribed to.
+ */
 struct topics {
-    struct topic *head;
-    struct topic *back;
+    struct topic *head; // head of list (last inserted)
+    struct topic *back; // back of list (first inserted)
 };
 
 typedef struct topics topics_t;

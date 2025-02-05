@@ -1,10 +1,22 @@
 #include "topic_list.h"
 
+/**
+ * Provided topic in string form is tokenized using '/' as separator. All
+ * allocations are handled. Need to be freed when destroying.
+ * 
+ * WARNING: Method is destructive w.r.t. topic string.
+ * 
+ * \param topic Topic string (destructive).
+ * \param count_out Pointer to integer, will return number of tokens found.
+ * 
+ * \returns Array of strings containing topic in tokenized form.
+ */
 char**
 tokenize_topic(char *topic, int *count_out) {
     char *temp = topic;
     int count = 1;
     while ((temp = strstr(temp, "/"))) {
+        // count number of topics based on delimiters
         count++;
         temp++;
     }
@@ -24,6 +36,16 @@ tokenize_topic(char *topic, int *count_out) {
     return tokenized_topic;
 }
 
+/**
+ * Inserts new topic into list. Topic is tokenized from its string form, and
+ * both forms are saved. QoS code can be inserted as well.
+ * 
+ * NOTE: Implementation only supports QoS level 0. Other levels are ignored.
+ * 
+ * \param list Linked list of topics.
+ * \param topic_str Topic in string form, to be tokenized.
+ * \param qos_code QoS quarantee for this topic.
+ */
 void
 insert_topic(topics_t *list, char *topic_str, int qos_code) {
     topic_t *topic = calloc(1, sizeof(topic_t));
@@ -38,6 +60,7 @@ insert_topic(topics_t *list, char *topic_str, int qos_code) {
         head->next = topic;
     }
     topic->next = NULL;
+    // tokenize_topic is destructive... make copy
     char* topic_copy = calloc(strlen(topic_str) + 1, sizeof(char));
     if (!topic_copy)
         err(1, "insert topic calloc topic_copy");
@@ -56,6 +79,15 @@ insert_topic(topics_t *list, char *topic_str, int qos_code) {
     list->head = topic;
 }
 
+/**
+ * Removes topic from topic linked list based on its string representation.
+ * Allocated memory is freed as needed.
+ * 
+ * \param list Linked list of topics.
+ * \param topic_str Topic in string form, to be removed.
+ * 
+ * \returns 1, if removal took place, 0 otherwise.
+ */
 int
 remove_topic(topics_t *list, char *topic_str) {
     topic_t *prev_topic = NULL;
@@ -85,6 +117,14 @@ remove_topic(topics_t *list, char *topic_str) {
     return 0;
 }
 
+/**
+ * Finds topic in topic linked list.
+ * 
+ * \param list Linked list of topics.
+ * \param topic_str Topic in string form, to be found.
+ * 
+ * \returns 1, if present, 0 otherwise.
+ */
 int
 find_topic(topics_t *list, char *topic_str) {
     for (topic_t *topic = list->back; topic != NULL; topic = topic->next) {
@@ -94,6 +134,14 @@ find_topic(topics_t *list, char *topic_str) {
     return 0;
 }
 
+/**
+ * Inserts topic into linked list, but firstly checks that such topic isn't
+ * already inserted.
+ * 
+ * \ref insert_topic
+ * 
+ * \returns 1, if insertion took place, 0 otherwise.
+ */
 int
 insert_topic_checked(topics_t *list, char *topic_str, int qos_code) {
     if (find_topic(list, topic_str))
@@ -104,6 +152,11 @@ insert_topic_checked(topics_t *list, char *topic_str, int qos_code) {
     }
 }
 
+/**
+ * Initializes new topic linked list.
+ * 
+ * \returns New topic linked list.
+ */
 topics_t *
 create_topics_list() {
     topics_t *list = calloc(1, sizeof(topics_t));
@@ -114,6 +167,11 @@ create_topics_list() {
     return list;
 }
 
+/**
+ * Frees allocated memory by topic linked list.
+ * 
+ * \param list Topic linked list to delete.
+ */
 void
 delete_topics_list(topics_t *list) {
     topic_t *prev_topic = NULL;
