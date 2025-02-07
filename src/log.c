@@ -3,7 +3,8 @@
 void
 log_general(const char *level, const char *fmt, va_list args) {
     char *final_string;
-    asprintf(&final_string, "%s: %s\n", level, fmt);
+    final_string = calloc(5 + 2 + strlen(fmt) + 1 + 1, sizeof (char));
+    sprintf(final_string, "%s: %s\n", level, fmt);
     vfprintf(stdout, final_string, args);
     free(final_string);
 }
