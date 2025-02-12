@@ -85,7 +85,6 @@ add_connection(struct connections *conns, int fd) {
 	new_connection->pfd.fd = fd;
 	new_connection->pfd.events = POLLIN | POLLOUT;
 	new_connection->delete_me = 0;
-	new_connection->skip_me = 0;
 	new_connection->client_id = NULL;
 	new_connection->keep_alive = 0;
 	new_connection->topics = create_topics_list();
@@ -336,7 +335,7 @@ read_fixed_header(conn_t *conn) {
 	read_bytes_acc += read_bytes;
 
 	if (read_bytes == 0) {
-		conn->skip_me = 1;
+		conn->delete_me = 1;
 		return NULL;
 	}
 
@@ -379,8 +378,6 @@ check_poll_in(struct connections *conns) {
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (conn->skip_me) continue;
-
 		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
 			if (errno == EINTR) {
 				return;
@@ -390,7 +387,7 @@ check_poll_in(struct connections *conns) {
 
 		if (conn->pfd.revents & POLLIN) {
 			char *fixed_header = read_fixed_header(conn);
-			if (!fixed_header && !conn->delete_me) {
+			if (!fixed_header) {
 				continue;
 			}
 			process_incoming_data_from_client(conn, fixed_header);
@@ -435,7 +432,6 @@ check_poll_hup(struct connections *conns) {
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (conn->skip_me) continue;
 		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
 			if (errno == EINTR)
 				return;
@@ -463,7 +459,6 @@ check_poll_out(struct connections *conns) {
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (conn->skip_me) continue;
 		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
 			if (errno == EINTR)
 				return;
