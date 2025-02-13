@@ -67,7 +67,6 @@ struct connection {
     topic_t *last_topic_before_insert;
 
 	int delete_me; // client will be disconnected and deleted
-	int skip_me; // ???
 	int64_t last_seen; // last time this client sent some control packet
 	uint8_t seen_connect_packet; // we can't see two connect ctrl packets
 

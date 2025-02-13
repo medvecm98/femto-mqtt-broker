@@ -6,7 +6,7 @@ log_general(const char *level, const char *fmt, va_list args) {
     size_t final_string_len = 5 + 2 + strlen(fmt) + 1 + 1;
     final_string = calloc(final_string_len, sizeof (char));
     snprintf(final_string, final_string_len, "%s: %s\n", level, fmt);
-    vfprintf(stdout, final_string, args);
+    vfprintf(stderr, final_string, args);
     free(final_string);
 }
 
