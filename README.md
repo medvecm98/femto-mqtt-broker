@@ -11,5 +11,5 @@ make
 ```
 
 ... in root directory. Dependencies are **libc** and C compiler (gcc or clang).
-I've build this program successfully on OpenSUSE Tumbleweed, Matfyz Gentoo and
+I've built this program successfully on OpenSUSE Tumbleweed, Matfyz Gentoo and
 OpenBSD.
