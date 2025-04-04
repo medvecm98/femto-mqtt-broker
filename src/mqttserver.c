@@ -660,15 +660,19 @@ check_keep_alive(conns_t *conns) {
 int
 main(int argc, char* argv[]) {
 	int opt;
-	char* portstr = "1883";
+	char* portstr = calloc(6, sizeof(char));
+	strncpy(portstr, "1883", 5);
 
+	size_t opt_len = 0;
 	while ((opt = getopt(argc, argv, "-p:")) != -1) {
 		switch (opt) {
 			case 'p':
-				portstr = calloc(strlen(optarg), sizeof(char));
+				opt_len = strnlen(optarg, 5);
+				free(portstr);
+				portstr = calloc(opt_len + 1, sizeof(char));
 				if (!portstr)
 					err(1, "main calloc portstr");
-				portstr = strcpy(portstr, optarg);
+				portstr = strncpy(portstr, optarg, opt_len);
 				break;
 			default:
 				printf("Usage: ./mqttserver [-p <PORT>]\n");
@@ -726,6 +730,7 @@ main(int argc, char* argv[]) {
 	}
 	clear_connections(&conns);
 
+	free(portstr);
 	log_info("Server exiting.");
 
 	return 0;
