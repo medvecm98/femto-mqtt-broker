@@ -152,6 +152,7 @@ read_connect_message(conns_t *conns, conn_t *conn, char* incoming_message) {
 	}
 
 	conn->client_id = client_id;
+	conn->cliend_id_length = cid_len;
 
 	return 0;
 }
