@@ -34,13 +34,10 @@ struct topics {
 typedef struct topics topics_t;
 
 void
-insert_topic(topics_t *list, char *topic_str, int qos_code);
+insert_topic(topics_t *list, char *topic_str, size_t topic_len, int qos_code);
 
 int
-insert_topic_checked(topics_t *list, char *topic_str, int qos_code);
-
-int
-remove_topic(topics_t *list, char *topic_str);
+remove_topic(topics_t *list, char *topic_str, size_t topic_len);
 
 int
 find_topic(topics_t *list, char *topic_str);

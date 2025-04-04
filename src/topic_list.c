@@ -44,10 +44,11 @@ tokenize_topic(char *topic, int *count_out) {
  * 
  * \param list Linked list of topics.
  * \param topic_str Topic in string form, to be tokenized.
+ * \param topic_len Topic length, wihout null terminator.
  * \param qos_code QoS quarantee for this topic.
  */
 void
-insert_topic(topics_t *list, char *topic_str, int qos_code) {
+insert_topic(topics_t *list, char *topic_str, size_t topic_len, int qos_code) {
 	topic_t *topic = calloc(1, sizeof(topic_t));
 	if (!topic)
 		err(1, "insert topic calloc topic");
@@ -61,10 +62,10 @@ insert_topic(topics_t *list, char *topic_str, int qos_code) {
 	}
 	topic->next = NULL;
 	// tokenize_topic is destructive... make copy
-	char* topic_copy = calloc(strlen(topic_str) + 1, sizeof(char));
+	char* topic_copy = calloc(strnlen(topic_str, topic_len) + 1, sizeof(char));
 	if (!topic_copy)
 		err(1, "insert topic calloc topic_copy");
-	strcpy(topic_copy, topic_str);
+	strncpy(topic_copy, topic_str, topic_len);
 	topic->topic = topic_copy;
 	topic->tokenized_topic = tokenize_topic(
 		topic_str,
@@ -85,14 +86,15 @@ insert_topic(topics_t *list, char *topic_str, int qos_code) {
  * 
  * \param list Linked list of topics.
  * \param topic_str Topic in string form, to be removed.
+ * \param topic_len Topic length, wihout null terminator.
  * 
  * \returns 1, if removal took place, 0 otherwise.
  */
 int
-remove_topic(topics_t *list, char *topic_str) {
+remove_topic(topics_t *list, char *topic_str, size_t topic_len) {
 	topic_t *prev_topic = NULL;
 	for (topic_t *topic = list->back; topic != NULL; topic = topic->next) {
-		if (strcmp(topic->topic, topic_str) == 0) {
+		if (strncmp(topic->topic, topic_str, topic_len) == 0) {
 			free(topic->topic);
 			for (int i = 0; i < topic->topic_token_count; i++) {
 				free(topic->tokenized_topic[i]);
@@ -132,24 +134,6 @@ find_topic(topics_t *list, char *topic_str) {
 			return 1;
 	}
 	return 0;
-}
-
-/**
- * Inserts topic into linked list, but firstly checks that such topic isn't
- * already inserted.
- * 
- * \ref insert_topic
- * 
- * \returns 1, if insertion took place, 0 otherwise.
- */
-int
-insert_topic_checked(topics_t *list, char *topic_str, int qos_code) {
-	if (find_topic(list, topic_str))
-		return 0;
-	else {
-		insert_topic(list, topic_str, qos_code);
-		return 1;
-	}
 }
 
 /**
