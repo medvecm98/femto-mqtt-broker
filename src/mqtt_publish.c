@@ -98,10 +98,11 @@ topic_match(topic_t *topic_subbed, char *topic_published) {
  */
 void
 create_publish_message(conn_t *conn, publish_t *publish) {
+	size_t rem_len_len_checked = 0;
 	char *rem_len = from_uint_to_val_len(
-		2 + publish->topic_size + publish->message_size
+		2 + publish->topic_size + publish->message_size, &rem_len_len_checked
 	);
-	int rem_len_len = strlen(rem_len);
+	int rem_len_len = strnlen(rem_len, rem_len_len_checked);
 	int len = 0;
 
 	char* message = calloc(

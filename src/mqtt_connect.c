@@ -18,7 +18,7 @@ get_keep_alive(char *index) {
  * \returns Client ID in allocated buffer.
  */
 char*
-get_client_id(char *index) {
+get_client_id(char *index, uint16_t* cid_len) {
 	uint8_t *index8 = (uint8_t*) index;
 	uint16_t client_id_length = *index8;
 	index8++;
@@ -31,6 +31,7 @@ get_client_id(char *index) {
 		err(1, "get client_id calloc client_id");
 	memcpy(client_id, index8, client_id_length);
 
+	*cid_len = client_id_length;
 	return client_id;
 }
 
@@ -137,9 +138,10 @@ read_connect_message(conns_t *conns, conn_t *conn, char* incoming_message) {
 
 	/* payload */
 
-	char *client_id = get_client_id(index);
+	uint16_t cid_len = 0;
+	char *client_id = get_client_id(index, &cid_len);
 
-	if (strlen(client_id) == 0) {
+	if (strnlen(client_id, cid_len) == 0) {
 		log_warn("Found empty client ID.");
 		return 3;
 	}

@@ -36,7 +36,7 @@ from_val_len_to_uint(char *buffer) {
 }
 
 char *
-from_uint_to_val_len(int val) {
+from_uint_to_val_len(int val, size_t *len) {
 	char encoded_byte;
 	char *output = calloc(5, sizeof(char));
 	if (!output)
@@ -52,5 +52,6 @@ from_uint_to_val_len(int val) {
 		output[index++] = encoded_byte;
 	} while (val > 0);
 
+	*len = index;
 	return output;
 }

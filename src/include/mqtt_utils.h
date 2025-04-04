@@ -26,6 +26,6 @@ from_val_len_to_uint(char *buffer);
  * Use in remaining length field in MQTT control packet fixed header.
  */
 char *
-from_uint_to_val_len(int val);
+from_uint_to_val_len(int val, size_t *len);
 
 #endif
