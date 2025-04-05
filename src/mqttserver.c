@@ -336,6 +336,7 @@ read_fixed_header(conn_t *conn) {
 
 	if (read_bytes == 0) {
 		conn->delete_me = 1;
+		free(buffer);
 		return NULL;
 	}
 
@@ -356,6 +357,7 @@ read_fixed_header(conn_t *conn) {
 	// check if remaining len isn't too long
 	if ((buffer[read_bytes_acc - 1] & 128) != 0 && read_bytes_acc >= 5) {
 		conn->delete_me = 1;
+		free(buffer);
 		return NULL;
 	}
 

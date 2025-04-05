@@ -44,33 +44,39 @@ read_publish_message(conn_t *conn, char *incoming_message) {
  * 
  * \param topic_subbed Topic struct with already tokenized topic.
  * \param topic_published Second topic in its string form, not yet tokenized.
+ * 
+ * \return 1 if matches, 0 otherwise
  */
 int
 topic_match(topic_t *topic_subbed, char *topic_published) {
 	if (
 		topic_published[0] == '$' && 
 		(
-			strcmp(topic_subbed->tokenized_topic[0], "#") == 0 ||
-			strcmp(topic_subbed->tokenized_topic[0], "+") == 0
+			strncmp(topic_subbed->tokenized_topic[0], "#", 1) == 0 ||
+			strncmp(topic_subbed->tokenized_topic[0], "+", 1) == 0
 		)
 	) {
 		return 0;
 	}
 
 	int count = 0;
+	size_t token_length = 0;
 	for (
 		char *token = strtok(topic_published, "/");
 		token != NULL;
 		token = strtok(NULL, "/"), count++
 	) {
+		token_length = strlen(token);
 		if (count > topic_subbed->topic_token_count)
 			return 0;
-		if (strcmp(topic_subbed->tokenized_topic[count], "+") == 0)
+		if (strncmp(topic_subbed->tokenized_topic[count], "+", 1) == 0)
 			continue;
-		else if (strcmp(topic_subbed->tokenized_topic[count], token) == 0) {
+		else if (strncmp(
+			topic_subbed->tokenized_topic[count], token, token_length
+		) == 0) {
 			continue;
 		}
-		else if (strcmp(topic_subbed->tokenized_topic[count], "#") == 0)
+		else if (strncmp(topic_subbed->tokenized_topic[count], "#", 1) == 0)
 			return 1;
 		else
 			return 0;
@@ -78,7 +84,7 @@ topic_match(topic_t *topic_subbed, char *topic_published) {
 
 	if (
 		(count == topic_subbed->topic_token_count - 1) &&
-		strcmp(topic_subbed->tokenized_topic[count], "#") == 0
+		strncmp(topic_subbed->tokenized_topic[count], "#", 1) == 0
 	) {
 		return 1;
 	}

@@ -66,6 +66,7 @@ insert_topic(topics_t *list, char *topic_str, size_t topic_len, int qos_code) {
 	if (!topic_copy)
 		err(1, "insert topic calloc topic_copy");
 	strncpy(topic_copy, topic_str, topic_len);
+	topic->topic_len = topic_len;
 	topic->topic = topic_copy;
 	topic->tokenized_topic = tokenize_topic(
 		topic_str,
@@ -130,7 +131,7 @@ remove_topic(topics_t *list, char *topic_str, size_t topic_len) {
 int
 find_topic(topics_t *list, char *topic_str) {
 	for (topic_t *topic = list->back; topic != NULL; topic = topic->next) {
-		if (strcmp(topic->topic, topic_str) == 0)
+		if (strncmp(topic->topic, topic_str, topic->topic_len) == 0)
 			return 1;
 	}
 	return 0;

@@ -7,7 +7,9 @@ check_for_client_id_repeated(struct connections *conns, char* client_id) {
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (conn->client_id && strcmp(client_id, conn->client_id) == 0) {
+		if (conn->client_id &&
+			strncmp(client_id, conn->client_id, conn->cliend_id_length) == 0
+		) {
 			return 1;
 		}
 	}

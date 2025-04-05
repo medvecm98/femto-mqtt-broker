@@ -13,6 +13,7 @@
 struct topic {
     char **tokenized_topic; // array of tokens of tokenized topic
     char *topic; // topic in its string (pre-tokenization) form
+    size_t topic_len; // length of the topic string (pre-tokenization)
     int topic_token_count; // how many tokens is topic composed of
     int qos_code; // qos code for this topic
     struct topic *next; // next topic in topic linked list
