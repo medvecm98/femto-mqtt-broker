@@ -7,7 +7,9 @@ check_for_client_id_repeated(struct connections *conns, char* client_id) {
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (conn->client_id && strcmp(client_id, conn->client_id) == 0) {
+		if (conn->client_id &&
+			strncmp(client_id, conn->client_id, conn->cliend_id_length) == 0
+		) {
 			return 1;
 		}
 	}
@@ -36,7 +38,7 @@ from_val_len_to_uint(char *buffer) {
 }
 
 char *
-from_uint_to_val_len(int val) {
+from_uint_to_val_len(int val, size_t *len) {
 	char encoded_byte;
 	char *output = calloc(5, sizeof(char));
 	if (!output)
@@ -52,5 +54,6 @@ from_uint_to_val_len(int val) {
 		output[index++] = encoded_byte;
 	} while (val > 0);
 
+	*len = index;
 	return output;
 }

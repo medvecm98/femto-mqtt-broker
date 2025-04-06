@@ -57,6 +57,7 @@ struct connection {
 
 	topics_t *topics; // subscribed topics linked list
 	char *client_id;
+	size_t cliend_id_length;
 
 	char *message; // message in bytes form (no \0)
 	ssize_t message_size; // message size in bytes (no \0)

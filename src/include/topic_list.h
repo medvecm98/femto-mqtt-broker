@@ -13,6 +13,7 @@
 struct topic {
     char **tokenized_topic; // array of tokens of tokenized topic
     char *topic; // topic in its string (pre-tokenization) form
+    size_t topic_len; // length of the topic string (pre-tokenization)
     int topic_token_count; // how many tokens is topic composed of
     int qos_code; // qos code for this topic
     struct topic *next; // next topic in topic linked list
@@ -34,13 +35,10 @@ struct topics {
 typedef struct topics topics_t;
 
 void
-insert_topic(topics_t *list, char *topic_str, int qos_code);
+insert_topic(topics_t *list, char *topic_str, size_t topic_len, int qos_code);
 
 int
-insert_topic_checked(topics_t *list, char *topic_str, int qos_code);
-
-int
-remove_topic(topics_t *list, char *topic_str);
+remove_topic(topics_t *list, char *topic_str, size_t topic_len);
 
 int
 find_topic(topics_t *list, char *topic_str);

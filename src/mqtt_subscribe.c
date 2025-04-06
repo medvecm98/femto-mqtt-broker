@@ -79,12 +79,12 @@ read_payload(conn_t *conn, char *incoming_message) {
 		rem_len--;
 
 		if (conn->type == MQTT_SUBSCRIBE) {
-			insert_topic(conn->topics, topic, 0x00);
+			insert_topic(conn->topics, topic, length, 0x00);
 			free(topic);
 		}
 		else {
 			// UNSUBSCRIBE control packet
-			remove_topic(conn->topics, topic);
+			remove_topic(conn->topics, topic, length);
 			free(topic);
 		}
 
@@ -132,8 +132,11 @@ create_suback_message(conn_t *conn, int topic_counter) {
 	len++;
 
 	// get rem len in variable length format
-	char *rem_len = from_uint_to_val_len(2 + topic_counter);
-	size_t rem_len_len = strlen(rem_len);
+	size_t rem_len_len_checked = 0;
+	char *rem_len = from_uint_to_val_len(
+		2 + topic_counter, &rem_len_len_checked
+	);
+	size_t rem_len_len = strnlen(rem_len, rem_len_len_checked);
 
 	// write remaining length
 	for (int i = 0; i < rem_len_len; i++) {
