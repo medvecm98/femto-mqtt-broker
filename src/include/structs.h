@@ -1,7 +1,8 @@
 #ifndef FEMTO_MQTT_STRUCTS_H
 #define FEMTO_MQTT_STRUCTS_H
 
-#include <poll.h>
+#include "poll_list.h"
+#include "topic_list.h"
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,7 +14,6 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include "log.h"
-#include "topic_list.h"
 
 /**
  * All MQTT control packet types. Values are the same as in upper 4 bits in
@@ -51,6 +51,7 @@ typedef enum mqtt_control_packet_type ctrl_packet_t;
  */
 struct connection {
 	struct pollfd pfd; // for poll syscall, containing client's socked fd
+	size_t poll_list_index;
 
 	struct connection *next; // next entry in connections linked list
 	struct connection *prev; // previous entry in connections linked list

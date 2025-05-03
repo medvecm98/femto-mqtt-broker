@@ -56,7 +56,7 @@ clear_message(struct connection *conn, int should_free) {
  * \param fd File descriptor of socket of given connected peer, for polling.
  */
 void
-add_connection(struct connections *conns, int fd) {
+add_connection(struct connections *conns, poll_list_t *poll_list, int fd) {
 	struct connection *new_connection = calloc(1, sizeof(struct connection));
 
 	if (!new_connection)
@@ -82,7 +82,7 @@ add_connection(struct connections *conns, int fd) {
 
 	conns->count++;
 
-	new_connection->pfd.fd = fd;
+	new_connection->poll_list_index = add_poll_fd(poll_list, fd);
 	new_connection->pfd.events = POLLIN | POLLOUT;
 	new_connection->delete_me = 0;
 	new_connection->client_id = NULL;
@@ -372,22 +372,22 @@ read_fixed_header(conn_t *conn) {
  * \param conns pointer to connections structure
  */
 void
-check_poll_in(struct connections *conns) {
+check_poll_in(struct connections *conns, poll_list_t *list) {
 	if (conns->count == 0) return;
+
+	if (poll(list->poll_fds, list->index, POLL_WAIT_TIME) == -1) {
+		if (errno == EINTR) {
+			return;
+		}
+		err(1, "poll in check");
+	}
 
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
-			if (errno == EINTR) {
-				return;
-			}
-			err(1, "poll in check");
-		}
-
-		if (conn->pfd.revents & POLLIN) {
+		if (list->poll_fds[conn->poll_list_index].revents & POLLIN) {
 			char *fixed_header = read_fixed_header(conn);
 			if (!fixed_header) {
 				continue;
@@ -402,10 +402,14 @@ check_poll_in(struct connections *conns) {
  * Polling for listening socket, waiting for new connections.
  * 
  * \param conns Connections linked list.
+ * \param poll_list Dynamic array of pollfd structs.
  * \param listening_pfd `struct pollfd` with listeinig socket fd.
  */
 void
-poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
+poll_and_accept(
+	struct connections *conns, poll_list_t *poll_list,
+	struct pollfd *listening_pfd
+) {
 	int nfd = -1;
 	listening_pfd->events = POLLIN;
 
@@ -418,7 +422,7 @@ poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
 	if (listening_pfd->revents & POLLIN) {
 		if ((nfd = accept(listening_pfd->fd, NULL, NULL)) == -1)
 			err(3, "accept");
-		add_connection(conns, nfd);
+		add_connection(conns, poll_list, nfd);
 	}
 }
 
@@ -696,6 +700,9 @@ main(int argc, char* argv[]) {
 	int sock_fd = find_connection(portstr);
 	struct connections conns;
 	conns_init(&conns);
+
+	poll_list_t poll_list;
+	poll_list_init(&poll_list);
 	
 	if (listen(sock_fd, nclients) == -1)
 		err(3, "listen");
@@ -705,13 +712,13 @@ main(int argc, char* argv[]) {
 	struct pollfd listening_pfd;
 	listening_pfd.fd = sock_fd;
 	for (;;) {
-		poll_and_accept(&conns, &listening_pfd);
+		poll_and_accept(&conns, &poll_list, &listening_pfd);
 		if (interrupt_received) break;
 		check_poll_hup(&conns);
 		if (interrupt_received) break;
 		clear_connections(&conns);
 		if (interrupt_received) break;
-		check_poll_in(&conns);
+		check_poll_in(&conns, &poll_list);
 		if (interrupt_received) break;
 		check_and_process_mqtt_messages(&conns);
 		if (interrupt_received) break;
