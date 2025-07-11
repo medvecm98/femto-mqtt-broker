@@ -3,6 +3,7 @@
 #include "mqtt_connect.h"
 #include "mqtt_subscribe.h"
 #include "mqtt_publish.h"
+#include "poll_list.h"
 #include <signal.h>
 #include <time.h>
 #include <errno.h>
@@ -56,7 +57,7 @@ clear_message(struct connection *conn, int should_free) {
  * \param fd File descriptor of socket of given connected peer, for polling.
  */
 void
-add_connection(struct connections *conns, int fd) {
+add_connection(struct connections *conns, int fd, plist_ptr plist) {
 	struct connection *new_connection = calloc(1, sizeof(struct connection));
 
 	if (!new_connection)
@@ -82,8 +83,7 @@ add_connection(struct connections *conns, int fd) {
 
 	conns->count++;
 
-	new_connection->pfd.fd = fd;
-	new_connection->pfd.events = POLLIN | POLLOUT;
+	new_connection->poll_list_index = add_poll_fd(plist, fd, new_connection, POLLIN | POLLOUT);
 	new_connection->delete_me = 0;
 	new_connection->client_id = NULL;
 	new_connection->keep_alive = 0;
@@ -210,9 +210,8 @@ check_zeroed_flags(uint8_t packet_type_flags) {
  * \param fixed_header Fixed header in byte form.
  */
 void
-process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
+process_incoming_data_from_client(struct connection *conn, char *fixed_header, int fd) {
 	char packet_type_flags = fixed_header[0];
-	int fd = conn->pfd.fd;
 
 	conn->type = get_mqtt_type((uint8_t) packet_type_flags);
 
@@ -275,7 +274,7 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header) {
  * Prints all connections. For debugging purposes only.
  */
 void
-print_conns(struct connections* conns) {
+print_conns(struct connections* conns, plist_ptr plist) {
 	if (conns->count == 0) {
 		log_debug("No connections were found.");
 		return;
@@ -288,7 +287,7 @@ print_conns(struct connections* conns) {
 		conn = conn->next
 	) {
 		log_debug(".%d. fd: %p", i, conn);
-		log_debug(".%d. fd: %d", i, conn->pfd.fd);
+		log_debug(".%d. fd: %d", i, plist->poll_fds[conn->poll_list_index].fd);
 		log_debug(".%d. client_id: %s", i, conn->client_id);
 		log_debug(".%d. keep_alive: %d", i, conn->keep_alive);
 		log_debug(".%d. message size: %d", i, conn->message_size);
@@ -323,7 +322,7 @@ print_conns(struct connections* conns) {
  * \returns Allocated buffer containing fixed header in bytes.
  */
 char*
-read_fixed_header(conn_t *conn) {
+read_fixed_header(conn_t *conn, int pfd) {
 	char *buffer = calloc(6, 1);
 	if (!buffer)
 		err(1, "fixed header calloc buffer");
@@ -331,7 +330,7 @@ read_fixed_header(conn_t *conn) {
 	ssize_t read_bytes_acc = 0;
 
 	// read control packet type/flags and first remaining length byte
-	read_bytes = read(conn->pfd.fd, buffer, 2);
+	read_bytes = read(pfd, buffer, 2);
 	read_bytes_acc += read_bytes;
 
 	if (read_bytes == 0) {
@@ -343,14 +342,14 @@ read_fixed_header(conn_t *conn) {
 	// read packet control type and first remaining length byte
 	while (read_bytes_acc < 2) {
 		read_bytes = read(
-			conn->pfd.fd, buffer + read_bytes_acc, 2 - read_bytes_acc
+			pfd, buffer + read_bytes_acc, 2 - read_bytes_acc
 		);
 		read_bytes_acc += read_bytes;
 	}
 
 	// read other remaining length bytes, if needed
 	while ((buffer[read_bytes_acc - 1] & 128) != 0 && read_bytes_acc < 5) {
-		read_bytes = read(conn->pfd.fd, buffer + read_bytes_acc, 1);
+		read_bytes = read(pfd, buffer + read_bytes_acc, 1);
 		read_bytes_acc += read_bytes;
 	}
 
@@ -372,27 +371,29 @@ read_fixed_header(conn_t *conn) {
  * \param conns pointer to connections structure
  */
 void
-check_poll_in(struct connections *conns) {
+check_poll_in(struct connections *conns, plist_ptr plist) {
 	if (conns->count == 0) return;
 
+	if (poll(plist->poll_fds, plist->index, POLL_WAIT_TIME) == -1) {
+		if (errno == EINTR) {
+			return;
+		}
+		err(1, "poll in check");
+	}
+
+	int fd = 0;
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
-			if (errno == EINTR) {
-				return;
-			}
-			err(1, "poll in check");
-		}
-
-		if (conn->pfd.revents & POLLIN) {
-			char *fixed_header = read_fixed_header(conn);
+		if (plist->poll_fds[conn->poll_list_index].revents & POLLIN) {
+			fd = plist->poll_fds[conn->poll_list_index].fd;
+			char *fixed_header = read_fixed_header(conn, fd);
 			if (!fixed_header) {
 				continue;
 			}
-			process_incoming_data_from_client(conn, fixed_header);
+			process_incoming_data_from_client(conn, fixed_header, fd);
 			free(fixed_header);
 		}
 	}
@@ -405,7 +406,7 @@ check_poll_in(struct connections *conns) {
  * \param listening_pfd `struct pollfd` with listeinig socket fd.
  */
 void
-poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
+poll_and_accept(struct connections *conns, struct pollfd *listening_pfd, plist_ptr plist) {
 	int nfd = -1;
 	listening_pfd->events = POLLIN;
 
@@ -418,7 +419,7 @@ poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
 	if (listening_pfd->revents & POLLIN) {
 		if ((nfd = accept(listening_pfd->fd, NULL, NULL)) == -1)
 			err(3, "accept");
-		add_connection(conns, nfd);
+		add_connection(conns, nfd, plist);
 	}
 }
 
@@ -428,19 +429,20 @@ poll_and_accept(struct connections *conns, struct pollfd *listening_pfd) {
  * \param conns pointer to connections structure
  */
 void
-check_poll_hup(struct connections *conns) {
+check_poll_hup(struct connections *conns, plist_ptr plist) {
+	if (poll(plist->poll_fds, plist->index, POLL_WAIT_TIME) == -1) {
+		if (errno == EINTR) {
+			return;
+		}
+		err(1, "poll hup check");
+	}
+	
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
-			if (errno == EINTR)
-				return;
-			err(1, "poll hup check");
-		}
-
-		if (conn->pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+		if (plist->poll_fds[conn->poll_list_index].revents & (POLLHUP | POLLERR | POLLNVAL)) {
 			conn->delete_me = 1;
 		}
 	}
@@ -455,23 +457,28 @@ check_poll_hup(struct connections *conns) {
  * \param conns pointer to connections structure
  */
 void
-check_poll_out(struct connections *conns) {
+check_poll_out(struct connections *conns, poll_list_t* plist) {
+	if (poll(plist->poll_fds, plist->index, POLL_WAIT_TIME) == -1) {
+		if (errno == EINTR) {
+			return;
+		}
+		err(1, "poll out check");
+	}
+
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
 		conn = conn->next
 	) {
-		if (poll(&conn->pfd, 1, POLL_WAIT_TIME) == -1) {
-			if (errno == EINTR)
-				return;
-			err(1, "poll out check");
-		}
-
 		if (conn->state == 1 &&
 			conn->message_size > 0 &&
-			conn->pfd.revents & POLLOUT
+			plist->poll_fds[conn->poll_list_index].revents & POLLOUT
 		) {
-			write(conn->pfd.fd, conn->message, conn->message_size);
+			write(
+				plist->poll_fds[conn->poll_list_index].fd,
+				conn->message,
+				conn->message_size
+			);
 			clear_message(conn, 1);
 		}
 	}
@@ -599,7 +606,7 @@ check_and_process_mqtt_messages(struct connections *conns) {
  * those that already disconnected are.
  */
 void
-clear_connections(struct connections *conns) {
+clear_connections(struct connections *conns, poll_list_t* plist) {
 	struct connection *prev, *next;
 	for (
 		struct connection* conn = conns->conn_back;
@@ -608,10 +615,10 @@ clear_connections(struct connections *conns) {
 	) {
 		next = conn->next;
 		if (conn->delete_me) {
-			if (shutdown(conn->pfd.fd, SHUT_RDWR) == -1) {
-				err(12, "shutdown fail");
+			if (shutdown(plist->poll_fds[conn->poll_list_index].fd, SHUT_RDWR) == -1) {
+				log_info("shutdown failed");
 			}
-			if (close(conn->pfd.fd) == -1) {
+			if (close(plist->poll_fds[conn->poll_list_index].fd) == -1) {
 				err(1, "closing fd when deleting connection");
 			}
 
@@ -696,6 +703,9 @@ main(int argc, char* argv[]) {
 	int sock_fd = find_connection(portstr);
 	struct connections conns;
 	conns_init(&conns);
+
+	poll_list_t plist;
+	poll_list_init(&plist);
 	
 	if (listen(sock_fd, nclients) == -1)
 		err(3, "listen");
@@ -705,21 +715,21 @@ main(int argc, char* argv[]) {
 	struct pollfd listening_pfd;
 	listening_pfd.fd = sock_fd;
 	for (;;) {
-		poll_and_accept(&conns, &listening_pfd);
+		poll_and_accept(&conns, &listening_pfd, &plist);
 		if (interrupt_received) break;
-		check_poll_hup(&conns);
+		check_poll_hup(&conns, &plist);
 		if (interrupt_received) break;
-		clear_connections(&conns);
+		clear_connections(&conns, &plist);
 		if (interrupt_received) break;
-		check_poll_in(&conns);
+		check_poll_in(&conns, &plist);
 		if (interrupt_received) break;
 		check_and_process_mqtt_messages(&conns);
 		if (interrupt_received) break;
-		check_poll_out(&conns);
+		check_poll_out(&conns, &plist);
 		if (interrupt_received) break;
 		check_keep_alive(&conns);
 		if (interrupt_received) break;
-		clear_connections(&conns);
+		clear_connections(&conns, &plist);
 		if (interrupt_received) break;
 	}
 
@@ -730,9 +740,10 @@ main(int argc, char* argv[]) {
 	) {
 		conn->delete_me = 1;
 	}
-	clear_connections(&conns);
+	clear_connections(&conns, &plist);
 
 	free(portstr);
+	poll_list_free(&plist);
 	log_info("Server exiting.");
 
 	return 0;
