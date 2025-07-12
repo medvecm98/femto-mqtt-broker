@@ -21,8 +21,11 @@ src/mqtt_utils.o: src/include/mqtt_utils.h src/mqtt_utils.c src/include/structs.
 src/topic_list.o: src/include/topic_list.h src/topic_list.c src/include/structs.h
 	$(CC) -c $(CFLAGS) -o src/topic_list.o src/topic_list.c
 
-mqttserver: src/log.o src/mqtt_connect.o src/mqtt_publish.o src/mqtt_subscribe.o src/mqtt_utils.o src/topic_list.o src/mqttserver.c src/include/structs.h
-	$(CC) $(CFLAGS) src/mqttserver.c src/log.o src/mqtt_connect.o src/mqtt_publish.o src/mqtt_subscribe.o src/mqtt_utils.o src/topic_list.o -o mqttserver
+src/poll_list.o: src/poll_list.c src/include/poll_list.h src/include/structs.h
+	$(CC) -c $(CFLAGS) -o src/poll_list.o src/poll_list.c
+
+mqttserver: src/log.o src/mqtt_connect.o src/mqtt_publish.o src/mqtt_subscribe.o src/mqtt_utils.o src/topic_list.o src/mqttserver.c src/poll_list.o src/include/structs.h
+	$(CC) $(CFLAGS)  src/mqttserver.c src/log.o src/mqtt_connect.o src/mqtt_publish.o src/mqtt_subscribe.o src/mqtt_utils.o src/topic_list.o src/poll_list.o -o mqttserver
 
 clean:
 	rm -f mqttserver

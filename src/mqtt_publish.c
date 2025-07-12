@@ -67,7 +67,7 @@ topic_match(topic_t *topic_subbed, char *topic_published) {
 		token = strtok(NULL, "/"), count++
 	) {
 		token_length = strlen(token);
-		if (count > topic_subbed->topic_token_count)
+		if (count >= topic_subbed->topic_token_count)
 			return 0;
 		if (strncmp(topic_subbed->tokenized_topic[count], "+", 1) == 0)
 			continue;

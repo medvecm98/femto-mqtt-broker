@@ -50,7 +50,7 @@ typedef enum mqtt_control_packet_type ctrl_packet_t;
  * previous list entry are neccessary.
  */
 struct connection {
-	struct pollfd pfd; // for poll syscall, containing client's socked fd
+	// struct pollfd pfd; // for poll syscall, containing client's socked fd
 
 	struct connection *next; // next entry in connections linked list
 	struct connection *prev; // previous entry in connections linked list
@@ -72,6 +72,7 @@ struct connection {
 	uint8_t seen_connect_packet; // we can't see two connect ctrl packets
 
 	int state; // 0 - incoming, 1 - outgoing
+	int poll_list_index; // index of this connection's poll in poll list
 };
 
 typedef struct connection conn_t;
