@@ -208,65 +208,61 @@ check_zeroed_flags(uint8_t packet_type_flags) {
  * 
  * \param conn Connection linked list entry.
  * \param fixed_header Fixed header in byte form.
+ * \param fd File descriptor of client to read from.
  */
 void
 process_incoming_data_from_client(struct connection *conn, char *fixed_header, int fd) {
-	char packet_type_flags = fixed_header[0];
+	if (conn->message_size == 0) {
+		/* do only on first call for given message */
 
-	conn->type = get_mqtt_type((uint8_t) packet_type_flags);
+		char packet_type_flags = fixed_header[0];
 
-	if (conn->type == MQTT_PINGREQ || conn->type == MQTT_DISCONNECT) {
-		// for messages with empty remaining length
-		conn->message_size = -1;
-		return;
-	}
+		conn->type = get_mqtt_type((uint8_t) packet_type_flags);
 
-	if (conn->type == MQTT_SUBSCRIBE || conn->type == MQTT_UNSUBSCRIBE) {
-		if (!check_subscribe_flags(packet_type_flags)) {
-			log_warn("Invalid flags for (UN)SUBSCRIBE control packet.");
-			conn->delete_me = 1;
+		if (conn->type == MQTT_PINGREQ || conn->type == MQTT_DISCONNECT) {
+			// for messages with empty remaining length
+			conn->message_size = -1;
+			return;
 		}
-	}
-	else {
-		if (!check_zeroed_flags(packet_type_flags)) {
-			log_warn(
-				"Invalid flags for control packet (first byte of fixed header)."
-			);
-			conn->delete_me = 1;
+
+		if (conn->type == MQTT_SUBSCRIBE || conn->type == MQTT_UNSUBSCRIBE) {
+			if (!check_subscribe_flags(packet_type_flags)) {
+				log_warn("Invalid flags for (UN)SUBSCRIBE control packet.");
+				conn->delete_me = 1;
+				return;
+			}
 		}
+		else {
+			if (!check_zeroed_flags(packet_type_flags)) {
+				log_warn(
+					"Invalid flags for control packet (first byte of fixed header)."
+				);
+				conn->delete_me = 1;
+				return;
+			}
+		}
+
+		conn->message_size = conn->length_left_to_read;
+		conn->buffer_left_to_read = calloc(conn->length_left_to_read, sizeof(char));
+		if (!conn->buffer_left_to_read)
+			err(1, "process incoming data calloc buffer reallocate");
 	}
 
-	int rem_len = from_val_len_to_uint(fixed_header + 1);
+	/* do for all calls for given message */
 
-	char *buffer = calloc(rem_len, sizeof(char));
-	if (!buffer)
-		err(1, "process incoming data calloc buffer reallocate");
-
-	ssize_t bytes_read = read(fd, buffer, rem_len);
-	ssize_t bytes_read_acc = bytes_read;
-	while (bytes_read_acc < rem_len && bytes_read > 0) {
-		// loop until everything was read
-		bytes_read = read(
-			fd, buffer + bytes_read_acc, rem_len - bytes_read_acc
-		);
-		if (bytes_read == -1)
-			err(1, "process incoming data read");
-		bytes_read_acc += bytes_read;
-	}
+	int buffer_offset = conn->message_size - conn->length_left_to_read;
+	ssize_t bytes_read = read(fd, conn->buffer_left_to_read + buffer_offset, conn->length_left_to_read);
 
 	if (bytes_read == -1)
 		err(1, "read");
-	else if (bytes_read_acc != rem_len) {
-		log_error("Message read and remaining length values don't match.");
+
+	conn->length_left_to_read -= bytes_read;
+	
+	if (bytes_read == 0 && conn->length_left_to_read > 0) {
+		log_error("Unexpected EOF when reading message.");
 		conn->delete_me = 1;
-	}
-	else if (bytes_read == 0) {
-		log_error("No bytes were read.");
-		conn->delete_me = 1;
-	}
-	else {
-		conn->message_size = rem_len;
-		conn->message = buffer;
+	} else if (conn->length_left_to_read == 0) {
+		conn->message = conn->buffer_left_to_read;
 	}
 }
 
@@ -393,8 +389,25 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 			if (!fixed_header) {
 				continue;
 			}
+			conn->length_left_to_read = from_val_len_to_uint(fixed_header + 1);
 			process_incoming_data_from_client(conn, fixed_header, fd);
 			free(fixed_header);
+		}
+	}
+
+	int at_least_one_still_reading = 1;
+	while (at_least_one_still_reading) {
+		at_least_one_still_reading = 0;
+		for (
+			struct connection* conn = conns->conn_back;
+			conn != NULL;
+			conn = conn->next
+		) {
+			if (conn->length_left_to_read > 0) {
+				at_least_one_still_reading = 1;
+				fd = plist->poll_fds[conn->poll_list_index].fd;
+				process_incoming_data_from_client(conn, "", fd);
+			}
 		}
 	}
 }

@@ -66,6 +66,8 @@ struct connection {
     uint16_t packet_id;
 	/* last topic in topic list before insertion of new one */
     topic_t *last_topic_before_insert;
+	int length_left_to_read;
+	char* buffer_left_to_read;
 
 	int delete_me; // client will be disconnected and deleted
 	int64_t last_seen; // last time this client sent some control packet
