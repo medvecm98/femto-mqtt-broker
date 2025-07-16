@@ -143,11 +143,13 @@ read_connect_message(conns_t *conns, conn_t *conn, char* incoming_message) {
 
 	if (strnlen(client_id, cid_len) == 0) {
 		log_warn("Found empty client ID.");
+		free(client_id);
 		return 3;
 	}
 
 	if (check_for_client_id_repeated(conns, client_id)) {
 		log_warn("Found duplicate client ID.");
+		free(client_id);
 		return 3;
 	}
 
