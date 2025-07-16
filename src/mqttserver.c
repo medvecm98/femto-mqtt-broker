@@ -222,6 +222,10 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 		if (conn->type == MQTT_PINGREQ || conn->type == MQTT_DISCONNECT) {
 			// for messages with empty remaining length
 			conn->message_size = -1;
+			if (conn->type == MQTT_DISCONNECT) {
+				log_info("Client %s disconnecting.", conn->client_id);				
+				conn->delete_me = 1;
+			}
 			return;
 		}
 
@@ -532,7 +536,6 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			outgoing_message = create_connect_response(conn, conns, code);
 			break;
 		case MQTT_DISCONNECT:
-			log_info("Client %s disconnecting.", conn->client_id);
 			conn->delete_me = 1;
 			break;
 		case MQTT_SUBSCRIBE:
