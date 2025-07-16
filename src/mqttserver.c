@@ -736,9 +736,15 @@ main(int argc, char* argv[]) {
 		if (interrupt_received) break;
 		check_poll_in(&conns, &plist);
 		if (interrupt_received) break;
+		clear_connections(&conns, &plist);
+		if (interrupt_received) break;
 		check_and_process_mqtt_messages(&conns);
 		if (interrupt_received) break;
+		clear_connections(&conns, &plist);
+		if (interrupt_received) break;
 		check_poll_out(&conns, &plist);
+		if (interrupt_received) break;
+		clear_connections(&conns, &plist);
 		if (interrupt_received) break;
 		check_keep_alive(&conns);
 		if (interrupt_received) break;
