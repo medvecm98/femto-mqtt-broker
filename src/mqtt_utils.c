@@ -8,8 +8,12 @@ check_for_client_id_repeated(struct connections *conns, char* client_id) {
 		conn = conn->next
 	) {
 		if (conn->client_id &&
-			strncmp(client_id, conn->client_id, conn->cliend_id_length) == 0
+			strncmp(client_id, conn->client_id, conn->cliend_id_length) == 0 &&
+			conn->delete_me != 1
 		) {
+			/** we only want to remove clients with matching client_id 
+			 * that are not already being removed
+			 */
 			return 1;
 		}
 	}
