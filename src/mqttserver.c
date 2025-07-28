@@ -96,6 +96,58 @@ add_connection(struct connections *conns, int fd, plist_ptr plist) {
 	clear_message(new_connection, 0);
 }
 
+struct connection *
+clear_one_connection(struct connection *conn, struct connections *conns, poll_list_t* plist) {
+	if (shutdown(plist->poll_fds[conn->poll_list_index].fd, SHUT_RDWR) == -1) {
+		log_info("shutdown failed");
+	}
+	if (close(plist->poll_fds[conn->poll_list_index].fd) == -1) {
+		err(1, "closing fd when deleting connection");
+	}
+	struct connection *next = conn->next;
+	struct connection *prev = conn->prev;
+
+	if (prev)
+		prev->next = next;
+
+	if (next)
+		next->prev = prev;
+
+	if (conn == conns->conn_back) {
+		conns->conn_back = next;
+	}
+
+	if (conn == conns->conn_head) {
+		conns->conn_head = prev;
+	}
+
+	conns->count--;
+	free(conn->client_id);
+	delete_topics_list(conn->topics);
+	free(conn);
+	return next;
+}
+
+/**
+ * Shutdown and close sockets of connection marked as to be disconnected, or
+ * those that already disconnected are.
+ */
+void
+clear_connections(struct connections *conns, poll_list_t* plist) {
+	struct connection *next;
+	for (
+		struct connection* conn = conns->conn_back;
+		conn != NULL;
+		conn = next
+	) {
+		if (conn->delete_me) {
+			next = clear_one_connection(conn, conns, plist);
+		} else {
+			next = conn->next;
+		}
+	}
+}
+
 /**
  * Tries to find available address and bind to it. Socket may be used for
  * listening afterwards.
@@ -209,8 +261,10 @@ check_zeroed_flags(uint8_t packet_type_flags) {
  * \param conn Connection linked list entry.
  * \param fixed_header Fixed header in byte form.
  * \param fd File descriptor of client to read from.
+ * 
+ * \return -1 is delete_me flag was set and connection is scheduled for deletion, 0 otherwise.
  */
-void
+int
 process_incoming_data_from_client(struct connection *conn, char *fixed_header, int fd) {
 	if (conn->message_size == 0) {
 		/* do only on first call for given message */
@@ -225,15 +279,15 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 			if (conn->type == MQTT_DISCONNECT) {
 				log_info("Client %s disconnecting.", conn->client_id);				
 				conn->delete_me = 1;
+				return -1;
 			}
-			return;
 		}
 
 		if (conn->type == MQTT_SUBSCRIBE || conn->type == MQTT_UNSUBSCRIBE) {
 			if (!check_subscribe_flags(packet_type_flags)) {
 				log_warn("Invalid flags for (UN)SUBSCRIBE control packet.");
 				conn->delete_me = 1;
-				return;
+				return -1;
 			}
 		}
 		else {
@@ -242,7 +296,7 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 					"Invalid flags for control packet (first byte of fixed header)."
 				);
 				conn->delete_me = 1;
-				return;
+				return -1;
 			}
 		}
 
@@ -265,9 +319,11 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 	if (bytes_read == 0 && conn->length_left_to_read > 0) {
 		log_error("Unexpected EOF when reading message.");
 		conn->delete_me = 1;
+		return -1;
 	} else if (conn->length_left_to_read == 0) {
 		conn->message = conn->buffer_left_to_read;
 	}
+	return 0;
 }
 
 /**
@@ -394,7 +450,9 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 				continue;
 			}
 			conn->length_left_to_read = from_val_len_to_uint(fixed_header + 1);
-			process_incoming_data_from_client(conn, fixed_header, fd);
+			if (process_incoming_data_from_client(conn, fixed_header, fd) == -1) {
+				// clear_one_connection(conn, conns, plist);
+			}
 			free(fixed_header);
 		}
 	}
@@ -402,6 +460,7 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 	int at_least_one_still_reading = 1;
 	while (at_least_one_still_reading) {
 		at_least_one_still_reading = 0;
+		// clear_connections(conns, plist);
 		for (
 			struct connection* conn = conns->conn_back;
 			conn != NULL;
@@ -410,7 +469,9 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 			if (conn->length_left_to_read > 0) {
 				at_least_one_still_reading = 1;
 				fd = plist->poll_fds[conn->poll_list_index].fd;
-				process_incoming_data_from_client(conn, "", fd);
+				if (process_incoming_data_from_client(conn, "", fd) == -1) {
+					// clear_one_connection(conn, conns, plist);
+				}
 			}
 		}
 	}
@@ -613,51 +674,6 @@ check_and_process_mqtt_messages(struct connections *conns) {
 	) {
 		if (conn->message_size != 0 && conn->state == 0) {
 			process_mqtt_message(conn, conns);
-		}
-	}
-}
-
-/**
- * Shutdown and close sockets of connection marked as to be disconnected, or
- * those that already disconnected are.
- */
-void
-clear_connections(struct connections *conns, poll_list_t* plist) {
-	struct connection *prev, *next;
-	for (
-		struct connection* conn = conns->conn_back;
-		conn != NULL;
-		conn = next
-	) {
-		next = conn->next;
-		if (conn->delete_me) {
-			if (shutdown(plist->poll_fds[conn->poll_list_index].fd, SHUT_RDWR) == -1) {
-				log_info("shutdown failed");
-			}
-			if (close(plist->poll_fds[conn->poll_list_index].fd) == -1) {
-				err(1, "closing fd when deleting connection");
-			}
-
-			prev = conn->prev;
-
-			if (prev)
-				prev->next = next;
-
-			if (next)
-				next->prev = prev;
-			
-			if (conn == conns->conn_back) {
-				conns->conn_back = next;
-			}
-
-			if (conn == conns->conn_head) {
-				conns->conn_head = prev;
-			}
-
-			conns->count--;
-			free(conn->client_id);
-			delete_topics_list(conn->topics);
-			free(conn);
 		}
 	}
 }
