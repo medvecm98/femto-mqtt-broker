@@ -84,7 +84,6 @@ add_connection(struct connections *conns, int fd, plist_ptr plist) {
 	conns->count++;
 
 	new_connection->poll_list_index = add_poll_fd(plist, fd, new_connection, POLLIN | POLLOUT);
-	new_connection->delete_me = 0;
 	new_connection->client_id = NULL;
 	new_connection->keep_alive = 0;
 	new_connection->topics = create_topics_list();
@@ -126,26 +125,6 @@ clear_one_connection(struct connection *conn, struct connections *conns, poll_li
 	delete_topics_list(conn->topics);
 	free(conn);
 	return next;
-}
-
-/**
- * Shutdown and close sockets of connection marked as to be disconnected, or
- * those that already disconnected are.
- */
-void
-clear_connections(struct connections *conns, poll_list_t* plist) {
-	struct connection *next;
-	for (
-		struct connection* conn = conns->conn_back;
-		conn != NULL;
-		conn = next
-	) {
-		if (conn->delete_me) {
-			next = clear_one_connection(conn, conns, plist);
-		} else {
-			next = conn->next;
-		}
-	}
 }
 
 /**
@@ -784,23 +763,13 @@ main(int argc, char* argv[]) {
 		if (interrupt_received) break;
 		check_poll_hup(&conns, &plist);
 		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
-		if (interrupt_received) break;
 		check_poll_in(&conns, &plist);
-		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
 		if (interrupt_received) break;
 		check_and_process_mqtt_messages(&conns, &plist);
 		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
-		if (interrupt_received) break;
 		check_poll_out(&conns, &plist);
 		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
-		if (interrupt_received) break;
 		check_keep_alive(&conns, &plist);
-		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
 		if (interrupt_received) break;
 	}
 
@@ -812,7 +781,6 @@ main(int argc, char* argv[]) {
 	) {
 		next = clear_one_connection(conn, &conns, &plist);
 	}
-	// clear_connections(&conns, &plist);
 
 	free(portstr);
 	poll_list_free(&plist);
