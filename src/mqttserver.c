@@ -705,17 +705,19 @@ check_and_process_mqtt_messages(struct connections *conns, plist_ptr plist) {
  * value is positive).
  */
 void
-check_keep_alive(conns_t *conns) {
+check_keep_alive(conns_t *conns, plist_ptr plist) {
+	conn_t *next;
 	for (
 		conn_t *conn = conns->conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
+		next = conn->next;
 		if (
 			conn->keep_alive != 0 &&
 			conn->last_seen + conn->keep_alive * 1.5 < time(NULL)
 		) {
-			conn->delete_me = 1;
+			next = clear_one_connection(conn, conns, plist);
 		}
 	}
 }
@@ -787,20 +789,21 @@ main(int argc, char* argv[]) {
 		if (interrupt_received) break;
 		clear_connections(&conns, &plist);
 		if (interrupt_received) break;
-		check_keep_alive(&conns);
+		check_keep_alive(&conns, &plist);
 		if (interrupt_received) break;
 		clear_connections(&conns, &plist);
 		if (interrupt_received) break;
 	}
 
+	conn_t *next;
 	for (
 		conn_t *conn = conns.conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
-		conn->delete_me = 1;
+		next = clear_one_connection(conn, &conns, &plist);
 	}
-	clear_connections(&conns, &plist);
+	// clear_connections(&conns, &plist);
 
 	free(portstr);
 	poll_list_free(&plist);
