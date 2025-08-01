@@ -529,13 +529,15 @@ check_poll_hup(struct connections *conns, plist_ptr plist) {
 		err(1, "poll hup check");
 	}
 	
+	struct connection* next;
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
+		next = conn->next;
 		if (plist->poll_fds[conn->poll_list_index].revents & (POLLHUP | POLLERR | POLLNVAL)) {
-			conn->delete_me = 1;
+			next = clear_one_connection(conn, conns, plist);
 		}
 	}
 }
