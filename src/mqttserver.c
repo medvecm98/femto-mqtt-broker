@@ -248,6 +248,21 @@ check_zeroed_flags(uint8_t packet_type_flags) {
 		return 1;
 }
 
+void
+print_msg_type(ctrl_packet_t type) {
+	switch (type)
+	{
+	case MQTT_DISCONNECT:
+		log_trace("MSG disconnect");
+		break;
+	case MQTT_PUBLISH:
+		log_trace("MSG publish");
+		break;
+	default:
+		break;
+	}
+}
+
 /**
  * \brief Processes all data in MQTT control packet that follows after fixed
  * header.
@@ -272,22 +287,21 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 		char packet_type_flags = fixed_header[0];
 
 		conn->type = get_mqtt_type((uint8_t) packet_type_flags);
+		print_msg_type(conn->type);
 
 		if (conn->type == MQTT_PINGREQ || conn->type == MQTT_DISCONNECT) {
 			// for messages with empty remaining length
-			log_debug("got me some ping request");
 			conn->message_size = -1;
 			if (conn->type == MQTT_DISCONNECT) {
 				log_info("Client %s disconnecting.", conn->client_id);				
-				conn->delete_me = 1;
 				return -1;
 			}
+			return 0;
 		}
 
 		if (conn->type == MQTT_SUBSCRIBE || conn->type == MQTT_UNSUBSCRIBE) {
 			if (!check_subscribe_flags(packet_type_flags)) {
 				log_warn("Invalid flags for (UN)SUBSCRIBE control packet.");
-				conn->delete_me = 1;
 				return -1;
 			}
 		}
@@ -296,7 +310,6 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 				log_warn(
 					"Invalid flags for control packet (first byte of fixed header)."
 				);
-				conn->delete_me = 1;
 				return -1;
 			}
 		}
@@ -319,7 +332,6 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 	
 	if (bytes_read == 0 && conn->length_left_to_read > 0) {
 		log_error("Unexpected EOF when reading message.");
-		conn->delete_me = 1;
 		return -1;
 	} else if (conn->length_left_to_read == 0) {
 		conn->message = conn->buffer_left_to_read;
@@ -439,11 +451,13 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 	}
 
 	int fd = 0;
+	struct connection* next;
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
+		next = conn->next;
 		if (plist->poll_fds[conn->poll_list_index].revents & POLLIN) {
 			fd = plist->poll_fds[conn->poll_list_index].fd;
 			char *fixed_header = read_fixed_header(conn, fd);
@@ -452,7 +466,7 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 			}
 			conn->length_left_to_read = from_val_len_to_uint(fixed_header + 1);
 			if (process_incoming_data_from_client(conn, fixed_header, fd) == -1) {
-				// clear_one_connection(conn, conns, plist);
+				next = clear_one_connection(conn, conns, plist);
 			}
 			free(fixed_header);
 		}
@@ -461,17 +475,17 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 	int at_least_one_still_reading = 1;
 	while (at_least_one_still_reading) {
 		at_least_one_still_reading = 0;
-		// clear_connections(conns, plist);
 		for (
 			struct connection* conn = conns->conn_back;
 			conn != NULL;
-			conn = conn->next
+			conn = next
 		) {
+			next = conn->next;
 			if (conn->length_left_to_read > 0) {
 				at_least_one_still_reading = 1;
 				fd = plist->poll_fds[conn->poll_list_index].fd;
 				if (process_incoming_data_from_client(conn, "", fd) == -1) {
-					// clear_one_connection(conn, conns, plist);
+					next = clear_one_connection(conn, conns, plist);
 				}
 			}
 		}
