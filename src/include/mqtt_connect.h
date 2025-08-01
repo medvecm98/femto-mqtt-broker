@@ -25,6 +25,6 @@ read_connect_message(conns_t *conns, conn_t *conn, char* incoming_message);
  * \returns CONNACK MQTT control packet in bytes form.
  */
 char *
-create_connect_response(conn_t *conn, conns_t *conns, int code);
+create_connect_response(conn_t *conn, conns_t *conns, int code, int *failed);
 
 #endif

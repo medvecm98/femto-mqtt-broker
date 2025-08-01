@@ -84,7 +84,6 @@ add_connection(struct connections *conns, int fd, plist_ptr plist) {
 	conns->count++;
 
 	new_connection->poll_list_index = add_poll_fd(plist, fd, new_connection, POLLIN | POLLOUT);
-	new_connection->delete_me = 0;
 	new_connection->client_id = NULL;
 	new_connection->keep_alive = 0;
 	new_connection->topics = create_topics_list();
@@ -94,6 +93,38 @@ add_connection(struct connections *conns, int fd, plist_ptr plist) {
 	new_connection->seen_connect_packet = 0;
 
 	clear_message(new_connection, 0);
+}
+
+struct connection *
+clear_one_connection(struct connection *conn, struct connections *conns, poll_list_t* plist) {
+	if (shutdown(plist->poll_fds[conn->poll_list_index].fd, SHUT_RDWR) == -1) {
+		log_info("shutdown failed");
+	}
+	if (close(plist->poll_fds[conn->poll_list_index].fd) == -1) {
+		err(1, "closing fd when deleting connection");
+	}
+	struct connection *next = conn->next;
+	struct connection *prev = conn->prev;
+
+	if (prev)
+		prev->next = next;
+
+	if (next)
+		next->prev = prev;
+
+	if (conn == conns->conn_back) {
+		conns->conn_back = next;
+	}
+
+	if (conn == conns->conn_head) {
+		conns->conn_head = prev;
+	}
+
+	conns->count--;
+	free(conn->client_id);
+	delete_topics_list(conn->topics);
+	free(conn);
+	return next;
 }
 
 /**
@@ -196,6 +227,21 @@ check_zeroed_flags(uint8_t packet_type_flags) {
 		return 1;
 }
 
+void
+print_msg_type(ctrl_packet_t type) {
+	switch (type)
+	{
+	case MQTT_DISCONNECT:
+		log_trace("MSG disconnect");
+		break;
+	case MQTT_PUBLISH:
+		log_trace("MSG publish");
+		break;
+	default:
+		break;
+	}
+}
+
 /**
  * \brief Processes all data in MQTT control packet that follows after fixed
  * header.
@@ -209,8 +255,10 @@ check_zeroed_flags(uint8_t packet_type_flags) {
  * \param conn Connection linked list entry.
  * \param fixed_header Fixed header in byte form.
  * \param fd File descriptor of client to read from.
+ * 
+ * \return -1 is delete_me flag was set and connection is scheduled for deletion, 0 otherwise.
  */
-void
+int
 process_incoming_data_from_client(struct connection *conn, char *fixed_header, int fd) {
 	if (conn->message_size == 0) {
 		/* do only on first call for given message */
@@ -224,16 +272,15 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 			conn->message_size = -1;
 			if (conn->type == MQTT_DISCONNECT) {
 				log_info("Client %s disconnecting.", conn->client_id);				
-				conn->delete_me = 1;
+				return -1;
 			}
-			return;
+			return 0;
 		}
 
 		if (conn->type == MQTT_SUBSCRIBE || conn->type == MQTT_UNSUBSCRIBE) {
 			if (!check_subscribe_flags(packet_type_flags)) {
 				log_warn("Invalid flags for (UN)SUBSCRIBE control packet.");
-				conn->delete_me = 1;
-				return;
+				return -1;
 			}
 		}
 		else {
@@ -241,8 +288,7 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 				log_warn(
 					"Invalid flags for control packet (first byte of fixed header)."
 				);
-				conn->delete_me = 1;
-				return;
+				return -1;
 			}
 		}
 
@@ -264,10 +310,11 @@ process_incoming_data_from_client(struct connection *conn, char *fixed_header, i
 	
 	if (bytes_read == 0 && conn->length_left_to_read > 0) {
 		log_error("Unexpected EOF when reading message.");
-		conn->delete_me = 1;
+		return -1;
 	} else if (conn->length_left_to_read == 0) {
 		conn->message = conn->buffer_left_to_read;
 	}
+	return 0;
 }
 
 /**
@@ -334,7 +381,6 @@ read_fixed_header(conn_t *conn, int pfd) {
 	read_bytes_acc += read_bytes;
 
 	if (read_bytes == 0) {
-		conn->delete_me = 1;
 		free(buffer);
 		return NULL;
 	}
@@ -355,7 +401,6 @@ read_fixed_header(conn_t *conn, int pfd) {
 
 	// check if remaining len isn't too long
 	if ((buffer[read_bytes_acc - 1] & 128) != 0 && read_bytes_acc >= 5) {
-		conn->delete_me = 1;
 		free(buffer);
 		return NULL;
 	}
@@ -382,19 +427,24 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 	}
 
 	int fd = 0;
+	struct connection* next;
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
+		next = conn->next;
 		if (plist->poll_fds[conn->poll_list_index].revents & POLLIN) {
 			fd = plist->poll_fds[conn->poll_list_index].fd;
 			char *fixed_header = read_fixed_header(conn, fd);
 			if (!fixed_header) {
+				next = clear_one_connection(conn, conns, plist);
 				continue;
 			}
 			conn->length_left_to_read = from_val_len_to_uint(fixed_header + 1);
-			process_incoming_data_from_client(conn, fixed_header, fd);
+			if (process_incoming_data_from_client(conn, fixed_header, fd) == -1) {
+				next = clear_one_connection(conn, conns, plist);
+			}
 			free(fixed_header);
 		}
 	}
@@ -405,12 +455,15 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 		for (
 			struct connection* conn = conns->conn_back;
 			conn != NULL;
-			conn = conn->next
+			conn = next
 		) {
+			next = conn->next;
 			if (conn->length_left_to_read > 0) {
 				at_least_one_still_reading = 1;
 				fd = plist->poll_fds[conn->poll_list_index].fd;
-				process_incoming_data_from_client(conn, "", fd);
+				if (process_incoming_data_from_client(conn, "", fd) == -1) {
+					next = clear_one_connection(conn, conns, plist);
+				}
 			}
 		}
 	}
@@ -454,13 +507,15 @@ check_poll_hup(struct connections *conns, plist_ptr plist) {
 		err(1, "poll hup check");
 	}
 	
+	struct connection* next;
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
+		next = conn->next;
 		if (plist->poll_fds[conn->poll_list_index].revents & (POLLHUP | POLLERR | POLLNVAL)) {
-			conn->delete_me = 1;
+			next = clear_one_connection(conn, conns, plist);
 		}
 	}
 }
@@ -509,8 +564,10 @@ check_poll_out(struct connections *conns, poll_list_t* plist) {
  * 
  * \param conn Connection that send the control packet.
  * \param conns Connections linked list.
+ * 
+ * \return -1 if connection has to be deleted, 0 otherwise
  */
-void
+int
 process_mqtt_message(struct connection *conn, struct connections *conns) {
 	char *incoming_message, *outgoing_message;
 	incoming_message = conn->message; // no fixed header here
@@ -518,34 +575,39 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 	int code = 255;
 	int topics_inserted_code = 255;
 	conn->last_seen = time(NULL);
+	ctrl_packet_t conn_type = conn->type;
 
-	if (conn->type != MQTT_CONNECT && conn->seen_connect_packet == 0) {
-		conn->delete_me = 1;
-		return;
+	if (conn_type != MQTT_CONNECT && conn->seen_connect_packet == 0) {
+		return -1;
 	}
 
 	int publish_send_to_sender = 0;
-	switch (conn->type) {
+	switch (conn_type) {
 		case MQTT_CONNECT:
 			if (conn->seen_connect_packet == 1) {
-				conn->delete_me = 1;
-				return;
+				return -1;
 			}
 			conn->seen_connect_packet = 1;
 			code = read_connect_message(conns, conn, incoming_message);
-			outgoing_message = create_connect_response(conn, conns, code);
+			int failed = 0;
+			outgoing_message = create_connect_response(conn, conns, code, &failed);
+			if (failed)
+				return -1;
 			break;
 		case MQTT_DISCONNECT:
-			conn->delete_me = 1;
-			break;
+			return -1;
 		case MQTT_SUBSCRIBE:
 			conn->last_topic_before_insert = conn->topics->head;
 			topics_inserted_code = read_un_subscribe_message(
 				conn, incoming_message
 			);
+			if (topics_inserted_code == -1)
+				return -1;
 			outgoing_message = create_un_subscribe_response(
 				conn, conns, topics_inserted_code
 			);
+			if (!outgoing_message)
+				return -1;
 			break;
 		case MQTT_UNSUBSCRIBE:
 			conn->last_topic_before_insert = conn->topics->head;
@@ -555,6 +617,8 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			outgoing_message = create_un_subscribe_response(
 				conn, conns, topics_inserted_code
 			);
+			if (!outgoing_message)
+				return -1;
 			break;
 		case MQTT_PUBLISH:
 			;
@@ -580,24 +644,25 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			break;
 		default:
 			log_error("Not implemented / unsupported from %s", conn->client_id);
-			conn->delete_me = 1;
-			break;
+			return -1;
 	}
 
-	if (conn->type != MQTT_PUBLISH && conn->type != MQTT_DISCONNECT) {
+	if (conn_type != MQTT_PUBLISH && conn_type != MQTT_DISCONNECT) {
 		/* PUBLISH and DISCONNECT don't have direct replies, no outgoing
 		 * message needs to be sent */
-		if (conn->type != MQTT_PINGREQ)
+		if (conn_type != MQTT_PINGREQ)
 			free(conn->message);
 		// no answer to sender in PUBLISH message (in QoS 0)
 		conn->message = outgoing_message;
 		conn->state = 1;
 	}
 
-	if (conn->type == MQTT_PUBLISH && !publish_send_to_sender) {
+	if (conn_type == MQTT_PUBLISH && !publish_send_to_sender) {
 		// if peer is not publishing to itself, its message needs to be cleared
 		clear_message(conn, 1);
 	}
+
+	return 0;
 }
 
 /**
@@ -605,59 +670,18 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
  * check.
  */
 void
-check_and_process_mqtt_messages(struct connections *conns) {
-	for (
-		struct connection* conn = conns->conn_back;
-		conn != NULL;
-		conn = conn->next
-	) {
-		if (conn->message_size != 0 && conn->state == 0) {
-			process_mqtt_message(conn, conns);
-		}
-	}
-}
-
-/**
- * Shutdown and close sockets of connection marked as to be disconnected, or
- * those that already disconnected are.
- */
-void
-clear_connections(struct connections *conns, poll_list_t* plist) {
-	struct connection *prev, *next;
+check_and_process_mqtt_messages(struct connections *conns, plist_ptr plist) {
+	struct connection* next;
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
 		conn = next
 	) {
 		next = conn->next;
-		if (conn->delete_me) {
-			if (shutdown(plist->poll_fds[conn->poll_list_index].fd, SHUT_RDWR) == -1) {
-				log_info("shutdown failed");
+		if (conn->message_size != 0 && conn->state == 0) {
+			if (process_mqtt_message(conn, conns) == -1) {
+				next = clear_one_connection(conn, conns, plist);
 			}
-			if (close(plist->poll_fds[conn->poll_list_index].fd) == -1) {
-				err(1, "closing fd when deleting connection");
-			}
-
-			prev = conn->prev;
-
-			if (prev)
-				prev->next = next;
-
-			if (next)
-				next->prev = prev;
-			
-			if (conn == conns->conn_back) {
-				conns->conn_back = next;
-			}
-
-			if (conn == conns->conn_head) {
-				conns->conn_head = prev;
-			}
-
-			conns->count--;
-			free(conn->client_id);
-			delete_topics_list(conn->topics);
-			free(conn);
 		}
 	}
 }
@@ -667,17 +691,19 @@ clear_connections(struct connections *conns, poll_list_t* plist) {
  * value is positive).
  */
 void
-check_keep_alive(conns_t *conns) {
+check_keep_alive(conns_t *conns, plist_ptr plist) {
+	conn_t *next;
 	for (
 		conn_t *conn = conns->conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
+		next = conn->next;
 		if (
 			conn->keep_alive != 0 &&
 			conn->last_seen + conn->keep_alive * 1.5 < time(NULL)
 		) {
-			conn->delete_me = 1;
+			next = clear_one_connection(conn, conns, plist);
 		}
 	}
 }
@@ -735,34 +761,24 @@ main(int argc, char* argv[]) {
 		if (interrupt_received) break;
 		check_poll_hup(&conns, &plist);
 		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
-		if (interrupt_received) break;
 		check_poll_in(&conns, &plist);
 		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
-		if (interrupt_received) break;
-		check_and_process_mqtt_messages(&conns);
-		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
+		check_and_process_mqtt_messages(&conns, &plist);
 		if (interrupt_received) break;
 		check_poll_out(&conns, &plist);
 		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
-		if (interrupt_received) break;
-		check_keep_alive(&conns);
-		if (interrupt_received) break;
-		clear_connections(&conns, &plist);
+		check_keep_alive(&conns, &plist);
 		if (interrupt_received) break;
 	}
 
+	conn_t *next;
 	for (
 		conn_t *conn = conns.conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
-		conn->delete_me = 1;
+		next = clear_one_connection(conn, &conns, &plist);
 	}
-	clear_connections(&conns, &plist);
 
 	free(portstr);
 	poll_list_free(&plist);

@@ -49,7 +49,6 @@ read_payload(conn_t *conn, char *incoming_message) {
 	rem_len -= 2; // for variable header
 
 	if (rem_len == 0) {
-		conn->delete_me = 1;
 		return -1;
 	}
 
@@ -212,7 +211,6 @@ create_un_subscribe_response(
 	conn_t *conn, conns_t *conns, int topics_inserted_code
 ) {
 	if (topics_inserted_code == -1) {
-		conn->delete_me = 1;
 		return NULL;
 	}
 

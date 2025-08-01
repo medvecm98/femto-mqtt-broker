@@ -69,7 +69,6 @@ struct connection {
 	int length_left_to_read;
 	char* buffer_left_to_read;
 
-	int delete_me; // client will be disconnected and deleted
 	int64_t last_seen; // last time this client sent some control packet
 	uint8_t seen_connect_packet; // we can't see two connect ctrl packets
 
