@@ -590,7 +590,7 @@ check_poll_out(struct connections *conns, poll_list_t* plist) {
  * \return -1 if connection has to be deleted, 0 otherwise
  */
 int
-process_mqtt_message(struct connection *conn, struct connections *conns, plist_ptr plist) {
+process_mqtt_message(struct connection *conn, struct connections *conns) {
 	char *incoming_message, *outgoing_message;
 	incoming_message = conn->message; // no fixed header here
 	outgoing_message = NULL;
@@ -620,9 +620,13 @@ process_mqtt_message(struct connection *conn, struct connections *conns, plist_p
 			topics_inserted_code = read_un_subscribe_message(
 				conn, incoming_message
 			);
+			if (topics_inserted_code == -1)
+				return -1;
 			outgoing_message = create_un_subscribe_response(
 				conn, conns, topics_inserted_code
 			);
+			if (!outgoing_message)
+				return -1;
 			break;
 		case MQTT_UNSUBSCRIBE:
 			conn->last_topic_before_insert = conn->topics->head;
@@ -632,6 +636,8 @@ process_mqtt_message(struct connection *conn, struct connections *conns, plist_p
 			outgoing_message = create_un_subscribe_response(
 				conn, conns, topics_inserted_code
 			);
+			if (!outgoing_message)
+				return -1;
 			break;
 		case MQTT_PUBLISH:
 			;
@@ -693,7 +699,7 @@ check_and_process_mqtt_messages(struct connections *conns, plist_ptr plist) {
 	) {
 		next = conn->next;
 		if (conn->message_size != 0 && conn->state == 0) {
-			if (process_mqtt_message(conn, conns, plist) == -1) {
+			if (process_mqtt_message(conn, conns) == -1) {
 				next = clear_one_connection(conn, conns, plist);
 			}
 		}
