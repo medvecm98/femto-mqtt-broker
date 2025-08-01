@@ -611,7 +611,10 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			}
 			conn->seen_connect_packet = 1;
 			code = read_connect_message(conns, conn, incoming_message);
-			outgoing_message = create_connect_response(conn, conns, code);
+			int failed = 0;
+			outgoing_message = create_connect_response(conn, conns, code, &failed);
+			if (failed)
+				return -1;
 			break;
 		case MQTT_DISCONNECT:
 			return -1;

@@ -162,10 +162,13 @@ read_connect_message(conns_t *conns, conn_t *conn, char* incoming_message) {
 /**
  * Creates CONNACK MQTT control packet based on provided code.
  * 
+ * \param failed Pointer to int to indicate, if connection should be removed or
+ * 				 not.
+ * 
  * \returns CONNACK MQTT control packet in bytes form.
  */
 char *
-create_connect_response(conn_t *conn, conns_t *conns, int code) {
+create_connect_response(conn_t *conn, conns_t *conns, int code, int *failed) {
 	if (code == 0) {
 		// CONNACK OK
 		conn->message_size = 4;
@@ -174,19 +177,19 @@ create_connect_response(conn_t *conn, conns_t *conns, int code) {
 	else if (code == 2) {
 		// CONNACK invalid protocol version (only v3.1.1 is supported)
 		conn->message_size = 4;
-		conn->delete_me = 1;
+		*failed = 1;
 		return create_connack_message(0x01);
 	}
 	else if (code == 3) {
 		// CONNACK invalid identifier
 		conn->message_size = 4;
-		conn->delete_me = 1;
+		*failed = 1;
 		return create_connack_message(0x02);
 	}
 	else {
 		// error, just disconnect
 		log_warn("CONNECT error, disconnect");
-		conn->delete_me = 1;
+		*failed = 1;
 	}
 
 	return NULL;
