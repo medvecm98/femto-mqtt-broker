@@ -586,35 +586,35 @@ check_poll_out(struct connections *conns, poll_list_t* plist) {
  * 
  * \param conn Connection that send the control packet.
  * \param conns Connections linked list.
+ * 
+ * \return -1 if connection has to be deleted, 0 otherwise
  */
-void
-process_mqtt_message(struct connection *conn, struct connections *conns) {
+int
+process_mqtt_message(struct connection *conn, struct connections *conns, plist_ptr plist) {
 	char *incoming_message, *outgoing_message;
 	incoming_message = conn->message; // no fixed header here
 	outgoing_message = NULL;
 	int code = 255;
 	int topics_inserted_code = 255;
 	conn->last_seen = time(NULL);
+	ctrl_packet_t conn_type = conn->type;
 
-	if (conn->type != MQTT_CONNECT && conn->seen_connect_packet == 0) {
-		conn->delete_me = 1;
-		return;
+	if (conn_type != MQTT_CONNECT && conn->seen_connect_packet == 0) {
+		return -1;
 	}
 
 	int publish_send_to_sender = 0;
-	switch (conn->type) {
+	switch (conn_type) {
 		case MQTT_CONNECT:
 			if (conn->seen_connect_packet == 1) {
-				conn->delete_me = 1;
-				return;
+				return -1;
 			}
 			conn->seen_connect_packet = 1;
 			code = read_connect_message(conns, conn, incoming_message);
 			outgoing_message = create_connect_response(conn, conns, code);
 			break;
 		case MQTT_DISCONNECT:
-			conn->delete_me = 1;
-			break;
+			return -1;
 		case MQTT_SUBSCRIBE:
 			conn->last_topic_before_insert = conn->topics->head;
 			topics_inserted_code = read_un_subscribe_message(
@@ -658,24 +658,25 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			break;
 		default:
 			log_error("Not implemented / unsupported from %s", conn->client_id);
-			conn->delete_me = 1;
-			break;
+			return -1;
 	}
 
-	if (conn->type != MQTT_PUBLISH && conn->type != MQTT_DISCONNECT) {
+	if (conn_type != MQTT_PUBLISH && conn_type != MQTT_DISCONNECT) {
 		/* PUBLISH and DISCONNECT don't have direct replies, no outgoing
 		 * message needs to be sent */
-		if (conn->type != MQTT_PINGREQ)
+		if (conn_type != MQTT_PINGREQ)
 			free(conn->message);
 		// no answer to sender in PUBLISH message (in QoS 0)
 		conn->message = outgoing_message;
 		conn->state = 1;
 	}
 
-	if (conn->type == MQTT_PUBLISH && !publish_send_to_sender) {
+	if (conn_type == MQTT_PUBLISH && !publish_send_to_sender) {
 		// if peer is not publishing to itself, its message needs to be cleared
 		clear_message(conn, 1);
 	}
+
+	return 0;
 }
 
 /**
@@ -683,14 +684,18 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
  * check.
  */
 void
-check_and_process_mqtt_messages(struct connections *conns) {
+check_and_process_mqtt_messages(struct connections *conns, plist_ptr plist) {
+	struct connection* next;
 	for (
 		struct connection* conn = conns->conn_back;
 		conn != NULL;
-		conn = conn->next
+		conn = next
 	) {
+		next = conn->next;
 		if (conn->message_size != 0 && conn->state == 0) {
-			process_mqtt_message(conn, conns);
+			if (process_mqtt_message(conn, conns, plist) == -1) {
+				next = clear_one_connection(conn, conns, plist);
+			}
 		}
 	}
 }
@@ -774,7 +779,7 @@ main(int argc, char* argv[]) {
 		if (interrupt_received) break;
 		clear_connections(&conns, &plist);
 		if (interrupt_received) break;
-		check_and_process_mqtt_messages(&conns);
+		check_and_process_mqtt_messages(&conns, &plist);
 		if (interrupt_received) break;
 		clear_connections(&conns, &plist);
 		if (interrupt_received) break;
