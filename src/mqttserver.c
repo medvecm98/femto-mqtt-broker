@@ -403,7 +403,6 @@ read_fixed_header(conn_t *conn, int pfd) {
 	read_bytes_acc += read_bytes;
 
 	if (read_bytes == 0) {
-		conn->delete_me = 1;
 		free(buffer);
 		return NULL;
 	}
@@ -424,7 +423,6 @@ read_fixed_header(conn_t *conn, int pfd) {
 
 	// check if remaining len isn't too long
 	if ((buffer[read_bytes_acc - 1] & 128) != 0 && read_bytes_acc >= 5) {
-		conn->delete_me = 1;
 		free(buffer);
 		return NULL;
 	}
@@ -462,6 +460,7 @@ check_poll_in(struct connections *conns, plist_ptr plist) {
 			fd = plist->poll_fds[conn->poll_list_index].fd;
 			char *fixed_header = read_fixed_header(conn, fd);
 			if (!fixed_header) {
+				next = clear_one_connection(conn, conns, plist);
 				continue;
 			}
 			conn->length_left_to_read = from_val_len_to_uint(fixed_header + 1);
