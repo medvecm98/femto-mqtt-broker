@@ -636,7 +636,6 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			free(publish);
 			break;
 		case MQTT_PINGREQ:
-			log_debug("got ping req");
 			outgoing_message = calloc(2, 1);
 			if (!outgoing_message)
 				err(1, "process mqtt msg calloc outgoing_message");
