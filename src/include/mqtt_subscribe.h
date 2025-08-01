@@ -2,7 +2,6 @@
 #define FEMTO_MQTT_MSG_SUBSCRIBE_H
 
 #include "mqtt_utils.h"
-#include "poll_list.h"
 
 /**
  * Read, parse incoming (UN)SUBSCRIBE MQTT control packet.
