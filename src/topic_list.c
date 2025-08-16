@@ -9,7 +9,8 @@
  * \param topic Topic string (destructive).
  * \param count_out Pointer to integer, will return number of tokens found.
  * 
- * \returns Array of strings containing topic in tokenized form.
+ * \returns Array of strings containing topic in tokenized form. NULL, if
+ * 			client sent a wildcard character and should be disconnected.
  */
 char**
 tokenize_topic(char *topic, int *count_out) {
@@ -26,6 +27,8 @@ tokenize_topic(char *topic, int *count_out) {
 		err(1, "tokenize topic calloc tokenized_topic");
 	temp = strtok(topic, "/");
 	for (int i = 0; i < count; i++) {
+		if (strchr(temp, '+') || strchr(temp, '#') || strchr(temp, '$'))
+			return NULL;
 		tokenized_topic[i] = calloc(strlen(temp) + 1, sizeof(char));
 		strncpy(tokenized_topic[i], temp, strlen(temp));
 		temp = strtok(NULL, "/");
@@ -176,4 +179,9 @@ delete_topics_list(topics_t *list) {
 		free(prev_topic);
 
 	free(list);
+}
+
+int
+contains_wildcard_char(char *topic) {
+	return strchr(topic, '+') || strchr(topic, '$') || strchr(topic, '#');
 }

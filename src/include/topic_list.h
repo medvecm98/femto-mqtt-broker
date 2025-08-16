@@ -49,4 +49,7 @@ create_topics_list(void);
 void
 delete_topics_list(topics_t *list);
 
+int
+contains_wildcard_char(char *topic);
+
 #endif
