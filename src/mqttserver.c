@@ -626,6 +626,10 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			publish_t *publish = read_publish_message(
 				conn, incoming_message
 			);
+
+			if (contains_wildcard_char(publish->topic))
+				return -1;
+
 			publish_send_to_sender = send_published_message(
 				conn, conns, publish
 			);
