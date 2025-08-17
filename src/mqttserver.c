@@ -643,7 +643,7 @@ process_mqtt_message(struct connection *conn, struct connections *conns) {
 			conn->message_size = 2;
 			break;
 		default:
-			log_error("Not implemented / unsupported from %s", conn->client_id);
+			log_error("Not implemented / unsupported control packet type from %s", conn->client_id);
 			return -1;
 	}
 
