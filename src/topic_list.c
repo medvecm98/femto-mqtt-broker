@@ -27,7 +27,7 @@ tokenize_topic(char *topic, int *count_out) {
 		err(1, "tokenize topic calloc tokenized_topic");
 	temp = strtok(topic, "/");
 	for (int i = 0; i < count; i++) {
-		if (strchr(temp, '+') || strchr(temp, '#') || strchr(temp, '$'))
+		if (contains_wildcard_char(temp))
 			return NULL;
 		tokenized_topic[i] = calloc(strlen(temp) + 1, sizeof(char));
 		strncpy(tokenized_topic[i], temp, strlen(temp));

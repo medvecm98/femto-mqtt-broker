@@ -123,6 +123,14 @@ clear_one_connection(struct connection *conn, struct connections *conns, poll_li
 	conns->count--;
 	free(conn->client_id);
 	delete_topics_list(conn->topics);
+
+	// In case of early connection close, the message may not have
+	// been properly disposed of.
+	if (conn->message_size > 0)
+		clear_message(conn, 1);
+	else if (conn->message_size == -1)
+		clear_message(conn, 0);
+
 	free(conn);
 	return next;
 }

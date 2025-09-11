@@ -73,6 +73,11 @@ read_payload(conn_t *conn, char *incoming_message) {
 			rem_len--;
 		}
 
+		if (contains_wildcard_char(topic)) {
+			free(topic);
+			return -1;
+		}
+
 		//skip qos
 		index++;
 		rem_len--;
