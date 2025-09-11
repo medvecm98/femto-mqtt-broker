@@ -1,6 +1,7 @@
 all: mqttserver
 
 CFLAGS = -Wall -std=c99 -Werror=pedantic -D_POSIX_C_SOURCE=200809L -I src/include -O0 -g
+# CFLAGS = -Wall -std=c99 -Werror=pedantic -D_POSIX_C_SOURCE=200809L -I src/include -O0 -g -fsanitize=address -static-libasan
 
 src/log.o: src/include/log.h src/log.c
 	pwd
